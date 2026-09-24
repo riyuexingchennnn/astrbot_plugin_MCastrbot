@@ -301,7 +301,11 @@ class FairyBot extends EventEmitter {
   }
 
   receiveConversation(channel, username, message) {
-    if (!username || username === config.bot.username || !message?.trim()) return;
+    if (!username || username.toLowerCase() === config.bot.username.toLowerCase() || !message?.trim()) return;
+    // 公聊必须来自当前在线玩家，避免 <Server> 一类系统广播进入对话流水线。
+    if (channel === 'public' && !Object.keys(this.bot?.players || {}).some(
+      name => name.toLowerCase() === username.toLowerCase()
+    )) return;
     const body = message.trim().slice(0, 500);
     const key = `${channel}|${username}|${body}`;
     const now = Date.now();

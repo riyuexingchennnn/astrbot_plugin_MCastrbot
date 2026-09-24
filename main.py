@@ -133,7 +133,8 @@ class MCAstrBot(Star):
             "version": self.config.get("mc_version") or False,
             "auth": self.config.get("mc_auth", "offline"),
             "login_password": self.config.get("login_password", ""),
-            "resting_mode": self.config.get("resting_mode", ""),
+            "resting_mode": self.config.get("resting_mode", "spectator"),
+            "llm_max_move_distance": self.config.get("llm_max_move_distance", 32),
             "ask_message_regex": self.config.get("ask_message_regex", ""),
             "tell_message_regex": self.config.get("tell_message_regex", ""),
         }, ensure_ascii=False)
@@ -334,9 +335,26 @@ class MCAstrBot(Star):
         if action not in ("look_at_player", "scan", "goto"):
             return error_response("不支持的操作")
         try:
-            return json_response(await self.rpc(action, payload.get("args") or {}, timeout=8))
+            args = payload.get("args") or {}
+            if action == "goto":
+                args = await self._validate_goto(args)
+            return json_response(await self.rpc(action, args, timeout=8))
         except Exception as exc:
             return error_response(str(exc), status_code=503)
+
+    async def _validate_goto(self, args: dict) -> dict:
+        coords = [float(args[axis]) for axis in ("x", "y", "z")]
+        if not all(math.isfinite(value) for value in coords):
+            raise ValueError("坐标必须是有限数字")
+        snapshot = await self.rpc("snapshot")
+        position = snapshot.get("player", {}).get("position")
+        if not position:
+            raise ValueError("当前无法读取机器人位置")
+        distance = math.dist(coords, [position[axis] for axis in ("x", "y", "z")])
+        max_distance = max(1, min(128, int(self.config.get("llm_max_move_distance", 32))))
+        if not math.isfinite(distance) or distance > max_distance:
+            raise ValueError(f"目标超出 {max_distance} 格移动范围")
+        return dict(zip(("x", "y", "z"), coords))
 
     @filter.llm_tool(name="mc_observe_player")
     async def mc_observe_player(self, event: AstrMessageEvent, username: str):
@@ -380,18 +398,8 @@ class MCAstrBot(Star):
         if not self._can_use_llm_actions(event):
             return
         try:
-            coords = [float(x), float(y), float(z)]
-            if not all(math.isfinite(value) for value in coords):
-                raise ValueError("坐标必须是有限数字")
-            snapshot = await self.rpc("snapshot")
-            position = snapshot.get("player", {}).get("position")
-            if not position:
-                raise ValueError("当前无法读取机器人位置")
-            distance = math.dist(coords, [position[axis] for axis in ("x", "y", "z")])
-            max_distance = max(1, min(128, int(self.config.get("llm_max_move_distance", 32))))
-            if distance > max_distance:
-                raise ValueError(f"目标超出 {max_distance} 格移动范围")
-            result = await self.rpc("goto", dict(zip(("x", "y", "z"), coords)), timeout=8)
+            args = await self._validate_goto({"x": x, "y": y, "z": z})
+            result = await self.rpc("goto", args, timeout=8)
             yield event.plain_result(json.dumps(result, ensure_ascii=False))
         except Exception as exc:
             yield event.plain_result(f"移动失败：{exc}")

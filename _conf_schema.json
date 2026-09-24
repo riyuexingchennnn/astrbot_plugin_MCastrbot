@@ -5,7 +5,7 @@
   "mc_version": {"type":"string","description":"MC 协议版本","hint":"留空为 mineflayer 自动识别；特殊版本可手动填写","default":""},
   "mc_auth": {"type":"string","description":"MC 账户认证","default":"offline","options":["offline","microsoft"]},
   "login_password": {"type":"string","description":"登录 Mod 密码","hint":"留空不发送 /login；配置保存在 AstrBot 插件配置中","default":""},
-  "resting_mode": {"type":"string","description":"登录后游戏模式","hint":"留空不切换；如 spectator（需要对应服务器权限）","default":""},
+  "resting_mode": {"type":"string","description":"登录后游戏模式","hint":"留空表示不切换；spectator 可穿墙且不占睡觉人数（需要对应服务器权限）","default":"spectator"},
   "public_auto_reply": {"type":"bool","description":"回复 MC 公屏消息","hint":"关闭后仍在面板显示公屏；ask/tell 始终进入 AstrBot 会话","default":true},
   "ask_message_regex": {"type":"string","description":"自定义 ask 消息正则","hint":"可选；使用 username 与 message 两个命名分组匹配 Mod 自定义文案","default":""},
   "tell_message_regex": {"type":"string","description":"自定义 tell 消息正则","hint":"可选；使用 username 与 message 两个命名分组匹配 Mod 自定义文案","default":""},
@@ -21,5 +21,5 @@
   "split_log_base": {"type":"float","description":"　　对数底数","hint":"　　对数间隔时使用，必须大于 1","default":1.8,"condition":{"segmented_reply":true,"split_interval_method":"logarithmic"}},
   "allow_llm_actions": {"type":"bool","description":"允许 LLM 控制机器人行为（总开关）","hint":"开放看向玩家、扫描与小范围传送，不提供任意服务器命令","default":false},
   "allow_admin_llm_actions": {"type":"bool","description":"允许管理员让机器人调用 Agent 工具","default":false},
-  "llm_max_move_distance": {"type":"int","description":"　　LLM 单次移动最大距离","hint":"　　以机器人当前位置为中心，单位为方块；仅用于 LLM 工具","default":32,"condition":{"allow_llm_actions":true}}
+  "llm_max_move_distance": {"type":"int","description":"　　单次移动最大距离","hint":"　　以机器人当前位置为中心，单位为方块；用于 LLM 工具与 Web API","default":32,"condition":{"allow_llm_actions":true}}
 }

@@ -5,6 +5,7 @@ const config = require('../config');
 
 test('public, tell and ask messages are classified and duplicate chat is suppressed', () => {
   const bot = new FairyBot();
+  bot.bot = { players: { Alex: { username: 'Alex' } } };
   const received = [];
   bot.on('conversation', item => received.push(item));
   bot.parseConversation('<Alex> hello');
@@ -14,6 +15,21 @@ test('public, tell and ask messages are classified and duplicate chat is suppres
   bot.parseConversation('<Fairy> own response');
   assert.deepEqual(received.map(item => item.channel), ['public', 'tell', 'ask']);
   assert.deepEqual(received.map(item => item.username), ['Alex', 'Alex', 'Alex']);
+});
+
+test('server broadcasts and departed players never become public conversations', () => {
+  const bot = new FairyBot();
+  bot.bot = { players: { Alex: { username: 'Alex' } } };
+  const received = [];
+  const publicChat = [];
+  bot.on('conversation', item => received.push(item));
+  bot.on('chat', item => { if (item.kind === 'public') publicChat.push(item); });
+  bot.parseConversation('<Server> 测试广播');
+  bot.parseConversation('<Departed> 已退出');
+  bot.parseConversation('<aLeX> 你好');
+  bot.parseConversation('<fAiRy> 自己的消息');
+  assert.deepEqual(received.map(item => item.username), ['aLeX']);
+  assert.equal(publicChat.length, 1);
 });
 
 test('custom ask format can route a mod message', () => {

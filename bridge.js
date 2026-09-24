@@ -1,6 +1,7 @@
 // AstrBot 子进程协议：stdin/stdout 每行一条 JSON，绝不开放未鉴权 HTTP 端口。
 const readline = require('readline');
 const { FairyBot } = require('./mc_bot');
+const config = require('./config');
 
 const bot = new FairyBot();
 const output = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -15,8 +16,17 @@ const allowed = {
   scan: ({ radius }) => bot.scan(Math.max(1, Math.min(24, Number(radius) || 12))),
   goto: ({ x, y, z }) => {
     const coords = [x, y, z].map(Number);
-    if (!coords.every(Number.isFinite) || coords.some(n => Math.abs(n) > 30000000)) {
+    if ([x, y, z].some(value => value == null) || !coords.every(Number.isFinite)) {
       throw new Error('坐标无效');
+    }
+    const position = bot.bot?.entity?.position;
+    if (!position) throw new Error('当前无法读取机器人位置');
+    // 桥接层再限制一次移动距离，512 格是独立于配置的硬上限。
+    const maxDistance = Math.min(config.maxMoveDistance, 512);
+    const [targetX, targetY, targetZ] = coords;
+    const distance = Math.hypot(targetX - position.x, targetY - position.y, targetZ - position.z);
+    if (!Number.isFinite(distance) || distance > maxDistance) {
+      throw new Error(`目标超出 ${maxDistance} 格移动范围`);
     }
     return bot.goto(...coords);
   },
