@@ -1,0 +1,12 @@
+{
+  "name": "astrbot-plugin-mcastrbot-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Minecraft mineflayer bridge for AstrBot",
+  "main": "bridge.js",
+  "dependencies": {
+    "mineflayer": "^4.39.0",
+    "minecraft-data": "^3.115.0",
+    "vec3": "^0.2.0"
+  }
+}

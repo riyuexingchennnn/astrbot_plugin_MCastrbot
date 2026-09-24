@@ -1,0 +1,319 @@
+"""Minecraft 会话接入 AstrBot。Node 仅负责 MC 协议，AstrBot 负责对话流水线。"""
+from __future__ import annotations
+
+import asyncio
+import json
+import math
+import random
+import re
+import time
+import uuid
+from collections import deque
+from pathlib import Path
+
+from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.message_components import At, Plain
+from astrbot.api.platform import AstrBotMessage, Group, MessageMember, MessageType, PlatformMetadata
+from astrbot.api.star import Context, Star
+from astrbot.api.web import error_response, json_response, request
+from .reply import filter_reply, split_reply
+
+
+PLUGIN_NAME = "astrbot_plugin_MCastrbot"
+META = PlatformMetadata(
+    name="minecraft", description="Minecraft mineflayer 会话", id="minecraft-fairy",
+    support_streaming_message=False, support_proactive_message=False,
+)
+
+
+class MinecraftEvent(AstrMessageEvent):
+    def __init__(self, message: AstrBotMessage, plugin: "MCAstrBot", channel: str, sender: str):
+        super().__init__(message.message_str, message, META, message.session_id)
+        self.plugin = plugin
+        self.mc_channel = channel
+        self.mc_sender = sender
+
+    async def send(self, message: MessageChain) -> None:
+        await super().send(message)
+        text = message.get_plain_text().strip()
+        if text:
+            target = self.mc_sender if self.mc_channel in ("ask", "tell") else None
+            await self.plugin.send_mc_text(text, target)
+
+
+class MCAstrBot(Star):
+    def __init__(self, context: Context, config: dict):
+        super().__init__(context, config)
+        self.config = config
+        self.proc: asyncio.subprocess.Process | None = None
+        self.reader_task: asyncio.Task | None = None
+        self.stderr_task: asyncio.Task | None = None
+        self.supervisor_task: asyncio.Task | None = None
+        self.pending: dict[str, asyncio.Future] = {}
+        self.write_lock = asyncio.Lock()
+        self.recent = deque(maxlen=100)
+        self.logs = deque(maxlen=100)
+        self.last_snapshot: dict = {"bot": {"status": "starting", "online": False}}
+        self.stopping = False
+        context.register_web_api(f"/{PLUGIN_NAME}/status", self.web_status, ["GET"], "MC 状态")
+        context.register_web_api(f"/{PLUGIN_NAME}/say", self.web_say, ["POST"], "发送 MC 聊天")
+        context.register_web_api(f"/{PLUGIN_NAME}/action", self.web_action, ["POST"], "控制 MC 机器人")
+
+    async def initialize(self) -> None:
+        await self._launch_bridge()
+        if self.proc:
+            self.supervisor_task = asyncio.create_task(self._supervise_bridge())
+
+    async def _launch_bridge(self) -> None:
+        import os
+
+        host = str(self.config.get("server_host", "127.0.0.1")).strip()
+        if not host:
+            logger.warning("MC AstrBot: 未配置服务器地址")
+            return
+        bridge = Path(__file__).with_name("bridge.js")
+        env = dict(os.environ)
+        env["MC_ASTRBOT_CONFIG"] = json.dumps({
+            "host": host,
+            "port": self.config.get("server_port", 25565),
+            "username": self.config.get("bot_name", "Fairy"),
+            "version": self.config.get("mc_version") or False,
+            "auth": self.config.get("mc_auth", "offline"),
+            "login_password": self.config.get("login_password", ""),
+            "resting_mode": self.config.get("resting_mode", ""),
+            "ask_message_regex": self.config.get("ask_message_regex", ""),
+            "tell_message_regex": self.config.get("tell_message_regex", ""),
+        }, ensure_ascii=False)
+        try:
+            self.proc = await asyncio.create_subprocess_exec(
+                "node", str(bridge), cwd=str(bridge.parent), env=env,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except (FileNotFoundError, OSError) as exc:
+            logger.error("MC AstrBot: Node 桥接启动失败: %s", exc)
+            self.last_snapshot["bot"]["status"] = "bridge_error"
+            return
+        self.reader_task = asyncio.create_task(self._read_bridge())
+        self.stderr_task = asyncio.create_task(self._read_stderr())
+        logger.info("MC AstrBot: 已启动 Minecraft 桥接进程")
+
+    async def _supervise_bridge(self) -> None:
+        delay = 5
+        while not self.stopping and self.proc:
+            await self.proc.wait()
+            if self.stopping:
+                break
+            logger.warning("MC AstrBot: 桥接进程退出，%s 秒后重启", delay)
+            await asyncio.sleep(delay)
+            if self.stopping:
+                break
+            await self._launch_bridge()
+            delay = min(60, delay * 2)
+
+    async def terminate(self) -> None:
+        self.stopping = True
+        if self.supervisor_task:
+            self.supervisor_task.cancel()
+        if self.proc and self.proc.returncode is None:
+            self.proc.terminate()
+            try:
+                await asyncio.wait_for(self.proc.wait(), 3)
+            except asyncio.TimeoutError:
+                self.proc.kill()
+                await self.proc.wait()
+        for task in (self.reader_task, self.stderr_task):
+            if task:
+                task.cancel()
+        for fut in self.pending.values():
+            if not fut.done():
+                fut.set_exception(RuntimeError("MC 桥接已停止"))
+        self.pending.clear()
+
+    async def _read_bridge(self) -> None:
+        assert self.proc and self.proc.stdout
+        try:
+            while line := await self.proc.stdout.readline():
+                try:
+                    packet = json.loads(line)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                kind = packet.get("type")
+                if kind == "reply":
+                    fut = self.pending.get(str(packet.get("id")))
+                    if fut and not fut.done():
+                        if packet.get("error"):
+                            fut.set_exception(RuntimeError(packet["error"]))
+                        else:
+                            fut.set_result(packet.get("data"))
+                elif kind == "conversation":
+                    asyncio.create_task(self._receive(packet.get("data") or {}))
+                elif kind == "chat":
+                    self.recent.append(packet.get("data"))
+                elif kind == "log":
+                    self.logs.append({"at": int(time.time() * 1000), "line": packet.get("line", "")})
+        finally:
+            self.last_snapshot = {"bot": {"status": "bridge_stopped", "online": False}}
+            for fut in self.pending.values():
+                if not fut.done():
+                    fut.set_exception(RuntimeError("MC 桥接已断开"))
+            if not self.stopping:
+                logger.error("MC AstrBot: 桥接进程意外退出，请检查 Node 依赖与日志")
+
+    async def _read_stderr(self) -> None:
+        assert self.proc and self.proc.stderr
+        while line := await self.proc.stderr.readline():
+            logger.warning("MC AstrBot bridge: %s", line.decode(errors="replace").rstrip()[:500])
+
+    async def rpc(self, action: str, args: dict | None = None, timeout: float = 10) -> dict:
+        if not self.proc or self.proc.returncode is not None or not self.proc.stdin:
+            raise RuntimeError("MC 桥接进程未运行")
+        ident = uuid.uuid4().hex
+        fut = asyncio.get_running_loop().create_future()
+        self.pending[ident] = fut
+        try:
+            payload = json.dumps({"id": ident, "action": action, "args": args or {}}, ensure_ascii=False)
+            async with self.write_lock:
+                self.proc.stdin.write((payload + "\n").encode())
+                await self.proc.stdin.drain()
+            return await asyncio.wait_for(fut, timeout)
+        finally:
+            self.pending.pop(ident, None)
+
+    async def _receive(self, data: dict) -> None:
+        channel = data.get("channel")
+        sender = str(data.get("username", ""))
+        body = str(data.get("text", "")).strip()
+        if channel not in ("public", "ask", "tell") or not re.fullmatch(r"[A-Za-z0-9_]{1,16}", sender) or not body:
+            return
+        if channel == "public" and not self.config.get("public_auto_reply", True):
+            return
+        msg = AstrBotMessage()
+        msg.self_id = str(self.config.get("bot_name", "Fairy"))
+        msg.sender = MessageMember(sender, sender)
+        msg.message_id = uuid.uuid4().hex
+        msg.type = MessageType.GROUP_MESSAGE if channel == "public" else MessageType.FRIEND_MESSAGE
+        msg.group = Group(group_id="mc-world", group_name="Minecraft 公屏") if channel == "public" else None
+        msg.session_id = "mc-world" if channel == "public" else sender
+        msg.message_str = body
+        msg.message = [At(qq=msg.self_id), Plain(body)]
+        msg.raw_message = data
+        event = MinecraftEvent(msg, self, channel, sender)
+        self.context.get_event_queue().put_nowait(event)
+
+    async def send_mc_text(self, text: str, target: str | None = None) -> None:
+        limit = 240 - (6 + len(target)) if target else 240
+        pieces = split_reply(
+            text, bool(self.config.get("segmented_reply", True)),
+            int(self.config.get("split_threshold", 150)),
+            str(self.config.get("split_mode", "regex")),
+            str(self.config.get("split_regex", r"[。！？!?；;]+|\n+")),
+            limit,
+        )
+        pieces = filter_reply(
+            pieces, bool(self.config.get("split_filter_enabled", False)),
+            str(self.config.get("split_filter_regex", "")),
+        )
+        for index, piece in enumerate(pieces):
+            if index:
+                base_ms = max(0, min(5000, int(self.config.get("split_interval_ms", 900))))
+                method = self.config.get("split_interval_method", "fixed")
+                if method == "random":
+                    delay_ms = random.uniform(0, base_ms)
+                elif method == "logarithmic":
+                    log_base = max(1.1, float(self.config.get("split_log_base", 1.8)))
+                    delay_ms = min(5000, base_ms * math.log(max(2, len(piece)), log_base))
+                else:
+                    delay_ms = base_ms
+                await asyncio.sleep(delay_ms / 1000)
+            await self.rpc("say", {"text": piece, "target": target})
+
+    async def web_status(self):
+        try:
+            self.last_snapshot = await self.rpc("snapshot", timeout=3)
+        except Exception:
+            pass
+        return json_response({"snapshot": self.last_snapshot, "chat": list(self.recent)[-50:], "logs": list(self.logs)[-50:]})
+
+    async def web_say(self):
+        payload = await request.json(default={})
+        text = str(payload.get("text", "")).strip()
+        target = payload.get("target") or None
+        if not text or len(text) > 2000:
+            return error_response("消息长度须为 1–2000 字符")
+        if target and not re.fullmatch(r"[A-Za-z0-9_]{1,16}", str(target)):
+            return error_response("玩家名无效")
+        try:
+            await self.send_mc_text(text, target)
+            return json_response({"ok": True})
+        except Exception as exc:
+            return error_response(str(exc), status_code=503)
+
+    async def web_action(self):
+        payload = await request.json(default={})
+        action = payload.get("action")
+        if action not in ("look_at_player", "scan", "goto"):
+            return error_response("不支持的操作")
+        try:
+            return json_response(await self.rpc(action, payload.get("args") or {}, timeout=8))
+        except Exception as exc:
+            return error_response(str(exc), status_code=503)
+
+    @filter.llm_tool(name="mc_observe_player")
+    async def mc_observe_player(self, event: AstrMessageEvent, username: str):
+        """让 Minecraft 机器人看向视野内的玩家。
+
+        Args:
+            username(string): 玩家名
+        """
+        if event.get_platform_name() != "minecraft" or not self.config.get("allow_llm_actions", True):
+            return
+        try:
+            result = await self.rpc("look_at_player", {"username": username})
+            yield event.plain_result("已看向玩家" if result.get("ok") else str(result))
+        except Exception as exc:
+            yield event.plain_result(f"看向玩家失败：{exc}")
+
+    @filter.llm_tool(name="mc_scan_surroundings")
+    async def mc_scan_surroundings(self, event: AstrMessageEvent, radius: int):
+        """扫描 Minecraft 机器人周围的方块并返回统计。
+
+        Args:
+            radius(number): 扫描半径，范围 1 到 24
+        """
+        if event.get_platform_name() != "minecraft" or not self.config.get("allow_llm_actions", True):
+            return
+        try:
+            result = await self.rpc("scan", {"radius": max(1, min(24, int(radius)))})
+            yield event.plain_result(json.dumps(result, ensure_ascii=False)[:3000])
+        except Exception as exc:
+            yield event.plain_result(f"扫描失败：{exc}")
+
+    @filter.llm_tool(name="mc_move_nearby")
+    async def mc_move_nearby(self, event: AstrMessageEvent, x: float, y: float, z: float):
+        """将 Minecraft 机器人传送到附近坐标，适合观察玩家指定地点。
+
+        Args:
+            x(number): 目标 X 坐标
+            y(number): 目标 Y 坐标
+            z(number): 目标 Z 坐标
+        """
+        if event.get_platform_name() != "minecraft" or not self.config.get("allow_llm_actions", True):
+            return
+        try:
+            coords = [float(x), float(y), float(z)]
+            if not all(math.isfinite(value) for value in coords):
+                raise ValueError("坐标必须是有限数字")
+            snapshot = await self.rpc("snapshot")
+            position = snapshot.get("player", {}).get("position")
+            if not position:
+                raise ValueError("当前无法读取机器人位置")
+            distance = math.dist(coords, [position[axis] for axis in ("x", "y", "z")])
+            max_distance = max(1, min(128, int(self.config.get("llm_max_move_distance", 32))))
+            if distance > max_distance:
+                raise ValueError(f"目标超出 {max_distance} 格移动范围")
+            result = await self.rpc("goto", dict(zip(("x", "y", "z"), coords)), timeout=8)
+            yield event.plain_result(json.dumps(result, ensure_ascii=False))
+        except Exception as exc:
+            yield event.plain_result(f"移动失败：{exc}")

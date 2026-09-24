@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Minecraft 机器人</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main>
+    <header><div><h1>⛏ Minecraft 机器人</h1><p>实时查看服务器与 AstrBot 的连接</p></div><span id="online" class="badge">连接中</span></header>
+    <section class="stats">
+      <article><small>服务器</small><strong id="server">—</strong></article>
+      <article><small>机器人</small><strong id="bot">—</strong></article>
+      <article><small>位置 / 维度</small><strong id="position">—</strong></article>
+      <article><small>在线玩家</small><strong id="players">—</strong></article>
+    </section>
+    <section class="grid">
+      <article class="panel"><h2>发送消息</h2><form id="say-form"><label>目标玩家（留空为公屏）<input id="target" maxlength="16" placeholder="公屏"></label><label>消息<textarea id="message" maxlength="2000" placeholder="输入要发送的内容" required></textarea></label><button type="submit">发送到 MC</button></form><p id="say-result" class="hint"></p></article>
+      <article class="panel"><h2>机器人操作</h2><form id="look-form"><label>看向玩家<input id="look-player" maxlength="16" placeholder="玩家名" required></label><button type="submit">看向玩家</button></form><div class="row"><button id="scan" type="button">扫描附近</button></div><form id="goto-form"><label>传送坐标</label><div class="coords"><input id="x" type="number" step="any" placeholder="X" required><input id="y" type="number" step="any" placeholder="Y" required><input id="z" type="number" step="any" placeholder="Z" required></div><button type="submit">传送机器人</button></form><p id="action-result" class="hint"></p></article>
+    </section>
+    <section class="grid">
+      <article class="panel"><h2>MC 聊天</h2><div id="chat" class="feed"></div></article>
+      <article class="panel"><h2>运行日志</h2><div id="logs" class="feed"></div></article>
+    </section>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
