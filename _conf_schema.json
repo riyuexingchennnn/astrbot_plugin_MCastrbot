@@ -10,14 +10,14 @@
   "ask_message_regex": {"type":"string","description":"自定义 ask 消息正则","hint":"可选；使用 username 与 message 两个命名分组匹配 Mod 自定义文案","default":""},
   "tell_message_regex": {"type":"string","description":"自定义 tell 消息正则","hint":"可选；使用 username 与 message 两个命名分组匹配 Mod 自定义文案","default":""},
   "segmented_reply": {"type":"bool","description":"启用 LLM 分段回复","default":true},
-  "split_threshold": {"type":"int","description":"　　不分段字数阈值","hint":"回复短于此值时只发一条；每段仍受 MC 240 字符限制","default":150,"condition":{"segmented_reply":true}},
+  "split_threshold": {"type":"int","description":"　　不分段字数阈值","hint":"　　回复短于此值时只发一条；每段仍受 MC 240 字符限制","default":150,"condition":{"segmented_reply":true}},
   "split_mode": {"type":"string","description":"　　分段模式","default":"regex","options":["regex","length"],"condition":{"segmented_reply":true}},
-  "split_regex": {"type":"string","description":"　　分段正则表达式","hint":"作为断句位置使用，默认按中文与英文句末标点","default":"[。！？!?；;]+|\\n+","condition":{"segmented_reply":true,"split_mode":"regex"}},
+  "split_regex": {"type":"string","description":"　　分段正则表达式","hint":"　　作为断句位置使用，默认按中文与英文句末标点","default":"[。！？!?；;]+|\\n+","condition":{"segmented_reply":true,"split_mode":"regex"}},
   "split_filter_enabled": {"type":"bool","description":"　　启用内容过滤正则表达式","default":false,"condition":{"segmented_reply":true}},
-  "split_filter_regex": {"type":"string","description":"　　　　内容过滤正则表达式","hint":"每段发送前移除匹配内容；留空不处理","default":"","condition":{"segmented_reply":true,"split_filter_enabled":true}},
+  "split_filter_regex": {"type":"string","description":"　　　　内容过滤正则表达式","hint":"　　　　每段发送前移除匹配内容；留空不处理","default":"","condition":{"segmented_reply":true,"split_filter_enabled":true}},
   "split_interval_method": {"type":"string","description":"　　间隔计算方法","default":"fixed","options":["fixed","random","logarithmic"],"condition":{"segmented_reply":true}},
   "split_interval_ms": {"type":"int","description":"　　分段发送间隔（毫秒）","default":900,"condition":{"segmented_reply":true}},
-  "split_log_base": {"type":"float","description":"　　对数底数","hint":"对数间隔时使用，必须大于 1","default":1.8,"condition":{"segmented_reply":true,"split_interval_method":"logarithmic"}},
+  "split_log_base": {"type":"float","description":"　　对数底数","hint":"　　对数间隔时使用，必须大于 1","default":1.8,"condition":{"segmented_reply":true,"split_interval_method":"logarithmic"}},
   "allow_llm_actions": {"type":"bool","description":"允许 LLM 控制机器人行为","hint":"开放看向玩家、扫描与小范围传送，不提供任意服务器命令","default":true},
-  "llm_max_move_distance": {"type":"int","description":"　　LLM 单次移动最大距离","hint":"以机器人当前位置为中心，单位为方块；仅用于 LLM 工具","default":32,"condition":{"allow_llm_actions":true}}
+  "llm_max_move_distance": {"type":"int","description":"　　LLM 单次移动最大距离","hint":"　　以机器人当前位置为中心，单位为方块；仅用于 LLM 工具","default":32,"condition":{"allow_llm_actions":true}}
 }
