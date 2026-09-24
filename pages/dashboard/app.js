@@ -1,57 +1,140 @@
 const bridge = window.AstrBotPluginPage;
 const $ = id => document.getElementById(id);
-const fmt = time => new Date(time).toLocaleTimeString('zh-CN', {hour12:false});
+const statusMap = {
+  online: '在线', connecting: '连接中', reconnecting: '重连中',
+  stopped: '已断开', starting: '启动中', bridge_stopped: '桥接已断开',
+  bridge_error: '桥接启动失败',
+};
 
-function rows(container, items, render) {
-  container.replaceChildren();
-  if (!items.length) {
-    const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = '暂无记录'; container.append(empty); return;
+function fmtDur(ms) {
+  if (!ms || ms < 0) return '-';
+  const seconds = Math.floor(ms / 1000);
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor(seconds % 86400 / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  const rest = seconds % 60;
+  if (days) return `${days}天${hours}小时${minutes}分`;
+  if (hours) return `${hours}小时${minutes}分${rest}秒`;
+  if (minutes) return `${minutes}分${rest}秒`;
+  return `${rest}秒`;
+}
+
+function fmtTime(timestamp) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '--:--:--';
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map(value => String(value).padStart(2, '0')).join(':');
+}
+
+function txt(id, value) {
+  $(id).textContent = value === null || value === undefined || value === '' ? '-' : String(value);
+}
+
+function emptyRow(list, message) {
+  const row = document.createElement('li');
+  row.className = 'muted';
+  row.textContent = message;
+  list.replaceChildren(row);
+}
+
+function appendRow(list, { time, body, kind = '', self = false }) {
+  const row = document.createElement('li');
+  if (kind) row.className = `kind-${kind}`;
+  const clock = document.createElement('span');
+  clock.className = 't';
+  clock.textContent = time;
+  const text = document.createElement('span');
+  text.className = self ? 'txt self' : 'txt';
+  text.textContent = body;
+  row.append(clock, text);
+  list.append(row);
+}
+
+function renderPlayers(players) {
+  const list = $('players');
+  list.replaceChildren();
+  if (!players.length) return emptyRow(list, '当前无玩家');
+  for (const player of players) {
+    appendRow(list, {
+      time: player.ping == null ? '-' : `${player.ping}ms`,
+      body: `${player.name}${player.isSelf ? ' （本体）' : ''}`,
+      self: !!player.isSelf,
+    });
   }
-  for (const item of [...items].reverse()) {
-    const line = document.createElement('div'); line.className = 'item';
-    const time = document.createElement('time'); time.textContent = fmt(item.at || Date.now());
-    const body = document.createElement('span'); body.textContent = render(item);
-    line.append(time, body); container.append(line);
+}
+
+function renderChat(chat) {
+  const list = $('chat');
+  list.replaceChildren();
+  if (!chat.length) return emptyRow(list, '暂无消息');
+  for (const item of chat) {
+    appendRow(list, { time: fmtTime(item.at), body: item.text || '', kind: item.kind || '' });
+  }
+}
+
+function renderLogs(logs) {
+  const list = $('logs');
+  list.replaceChildren();
+  if (!logs.length) return emptyRow(list, '暂无日志');
+  for (const item of [...logs].reverse()) {
+    const match = String(item.line || '').match(/^\[(\w+)\]\s*(.*)$/);
+    appendRow(list, {
+      time: fmtTime(item.at),
+      body: match ? match[2] : String(item.line || ''),
+      kind: match ? match[1] : 'sys',
+    });
   }
 }
 
 async function refresh() {
   try {
     const data = await bridge.apiGet('status');
-    const snap = data.snapshot || {}, bot = snap.bot || {}, server = snap.server || {}, player = snap.player || {}, world = snap.world || {};
-    $('online').textContent = bot.online ? '● 在线' : `● ${bot.status || '离线'}`;
-    $('online').classList.toggle('ok', !!bot.online);
-    $('server').textContent = server.host ? `${server.host}:${server.port}` : '—';
-    $('bot').textContent = bot.username || '—';
-    $('position').textContent = player.position ? `${player.position.x}, ${player.position.y}, ${player.position.z} · ${player.dimension || '未知维度'}` : '—';
-    $('players').textContent = (world.players || []).map(p => p.name).join('、') || '—';
-    rows($('chat'), data.chat || [], item => item.text || '');
-    rows($('logs'), data.logs || [], item => item.line || '');
-  } catch (error) {
-    $('online').textContent = '● 面板通信失败'; $('online').classList.remove('ok');
+    const snapshot = data.snapshot || {};
+    const bot = snapshot.bot || {};
+    const server = snapshot.server || {};
+    const player = snapshot.player || {};
+    const world = snapshot.world || {};
+    const state = bot.status || 'stopped';
+    const badge = $('badge');
+    badge.className = `badge ${state === 'online' ? 'ok' : ['connecting', 'reconnecting', 'starting'].includes(state) ? 'warn' : 'bad'}`;
+    txt('badgeText', statusMap[state] || state);
+
+    txt('username', bot.username);
+    txt('status', statusMap[state] || state);
+    txt('onlineDur', fmtDur(bot.onlineDurationMs));
+    txt('totalDur', fmtDur(bot.totalOnlineMs));
+    txt('reconnect', bot.reconnectCount);
+    txt('uptime', fmtDur(bot.processUptimeMs));
+
+    const address = server.host ? `${server.host}:${server.port}` : '-';
+    txt('addr', address);
+    txt('target', address);
+    txt('ver', bot.version);
+    if (bot.username) $('pageTitle').textContent = `🎮 ${bot.username} 监控面板`;
+
+    txt('pos', player.position ? `${player.position.x}, ${player.position.y}, ${player.position.z}` : '-');
+    txt('dim', player.dimension);
+    txt('mode', player.gameMode);
+    txt('health', player.health == null ? '协议不支持' : `${player.health}/20`);
+    txt('food', player.food == null ? '协议不支持' : `${player.food}/20`);
+    txt('entities', world.entityCount);
+    txt('pcount', world.playerCount);
+    txt('tod', player.timeOfDay);
+    txt('weather', player.isRaining == null ? '-' : player.isRaining ? '下雨' : '晴朗');
+
+    txt('lastError', bot.lastError || '无');
+    txt('lastKick', bot.lastKick || '无');
+    txt('lastDisc', bot.lastDisconnect || '无');
+    renderPlayers(world.players || []);
+    renderChat(snapshot.chat || []);
+    renderLogs(data.logs || []);
+    txt('updated', `更新于 ${fmtTime(Date.now())}`);
+  } catch (_) {
+    $('badge').className = 'badge bad';
+    txt('badgeText', '面板失联');
   }
 }
 
-async function post(endpoint, body, resultId) {
-  $(resultId).textContent = '处理中…';
-  try {
-    const result = await bridge.apiPost(endpoint, body);
-    $(resultId).textContent = result.ok === false ? (result.error || JSON.stringify(result))
-      : result.actual ? `已完成，当前位置 ${JSON.stringify(result.actual)}`
-      : result.topBlocks ? `扫描 ${result.scannedBlocks} 个方块，主要类型：${result.topBlocks.slice(0, 8).map(([name, count]) => `${name} ${count}`).join('、')}`
-      : '已完成';
-    await refresh();
-  } catch (error) { $(resultId).textContent = error.message || String(error); }
-}
-
-$('say-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  await post('say', {text:$('message').value, target:$('target').value.trim()}, 'say-result');
-  if ($('say-result').textContent === '已完成') $('message').value = '';
-});
-$('look-form').addEventListener('submit', event => { event.preventDefault(); post('action', {action:'look_at_player',args:{username:$('look-player').value.trim()}}, 'action-result'); });
-$('scan').addEventListener('click', () => post('action', {action:'scan',args:{radius:12}}, 'action-result'));
-$('goto-form').addEventListener('submit', event => { event.preventDefault(); post('action', {action:'goto',args:{x:Number($('x').value),y:Number($('y').value),z:Number($('z').value)}}, 'action-result'); });
 await bridge.ready();
 await refresh();
-setInterval(refresh, 5000);
+setInterval(refresh, 2000);

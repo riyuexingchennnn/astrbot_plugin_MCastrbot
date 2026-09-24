@@ -1,29 +1,79 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Minecraft 机器人</title>
-  <link rel="stylesheet" href="./style.css">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fairy 监控面板</title>
+<link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <main>
-    <header><div><h1>⛏ Minecraft 机器人</h1><p>实时查看服务器与 AstrBot 的连接</p></div><span id="online" class="badge">连接中</span></header>
-    <section class="stats">
-      <article><small>服务器</small><strong id="server">—</strong></article>
-      <article><small>机器人</small><strong id="bot">—</strong></article>
-      <article><small>位置 / 维度</small><strong id="position">—</strong></article>
-      <article><small>在线玩家</small><strong id="players">—</strong></article>
-    </section>
-    <section class="grid">
-      <article class="panel"><h2>发送消息</h2><form id="say-form"><label>目标玩家（留空为公屏）<input id="target" maxlength="16" placeholder="公屏"></label><label>消息<textarea id="message" maxlength="2000" placeholder="输入要发送的内容" required></textarea></label><button type="submit">发送到 MC</button></form><p id="say-result" class="hint"></p></article>
-      <article class="panel"><h2>机器人操作</h2><form id="look-form"><label>看向玩家<input id="look-player" maxlength="16" placeholder="玩家名" required></label><button type="submit">看向玩家</button></form><div class="row"><button id="scan" type="button">扫描附近</button></div><form id="goto-form"><label>传送坐标</label><div class="coords"><input id="x" type="number" step="any" placeholder="X" required><input id="y" type="number" step="any" placeholder="Y" required><input id="z" type="number" step="any" placeholder="Z" required></div><button type="submit">传送机器人</button></form><p id="action-result" class="hint"></p></article>
-    </section>
-    <section class="grid">
-      <article class="panel"><h2>MC 聊天</h2><div id="chat" class="feed"></div></article>
-      <article class="panel"><h2>运行日志</h2><div id="logs" class="feed"></div></article>
-    </section>
-  </main>
-  <script type="module" src="./app.js"></script>
+<header>
+  <h1 id="pageTitle">🎮 Fairy 监控面板</h1>
+  <span id="badge" class="badge"><span class="dot"></span><span id="badgeText">连接中</span></span>
+  <span class="spacer"></span>
+  <span class="muted" id="target"></span>
+  <span class="muted" id="updated"></span>
+</header>
+
+<main>
+  <div class="grid">
+    <div class="card">
+      <h2>连接状态</h2>
+      <div class="kv"><span class="k">机器人</span><span class="v" id="username">-</span></div>
+      <div class="kv"><span class="k">状态</span><span class="v" id="status">-</span></div>
+      <div class="kv"><span class="k">本次在线</span><span class="v" id="onlineDur">-</span></div>
+      <div class="kv"><span class="k">累计在线</span><span class="v" id="totalDur">-</span></div>
+      <div class="kv"><span class="k">重连次数</span><span class="v" id="reconnect">-</span></div>
+      <div class="kv"><span class="k">进程运行</span><span class="v" id="uptime">-</span></div>
+    </div>
+
+    <div class="card">
+      <h2>游戏内状态</h2>
+      <div class="kv"><span class="k">坐标</span><span class="v" id="pos">-</span></div>
+      <div class="kv"><span class="k">维度</span><span class="v" id="dim">-</span></div>
+      <div class="kv"><span class="k">游戏模式</span><span class="v" id="mode">-</span></div>
+      <div class="kv"><span class="k">生命值</span><span class="v" id="health">-</span></div>
+      <div class="kv"><span class="k">饥饿值</span><span class="v" id="food">-</span></div>
+      <div class="kv"><span class="k">附近实体</span><span class="v" id="entities">-</span></div>
+    </div>
+
+    <div class="card">
+      <h2>服务器</h2>
+      <div class="kv"><span class="k">地址</span><span class="v" id="addr">-</span></div>
+      <div class="kv"><span class="k">协议版本</span><span class="v" id="ver">-</span></div>
+      <div class="kv"><span class="k">在线玩家</span><span class="v big" id="pcount">-</span></div>
+      <div class="kv"><span class="k">世界时间</span><span class="v" id="tod">-</span></div>
+      <div class="kv"><span class="k">天气</span><span class="v" id="weather">-</span></div>
+    </div>
+
+    <div class="card">
+      <h2>异常记录</h2>
+      <div class="kv"><span class="k">最近错误</span><span class="v" id="lastError">无</span></div>
+      <div class="kv"><span class="k">最近踢出</span><span class="v" id="lastKick">无</span></div>
+      <div class="kv"><span class="k">最近断开</span><span class="v" id="lastDisc">无</span></div>
+    </div>
+
+    <div class="card full">
+      <h2>在线玩家</h2>
+      <ul id="players"><li class="muted">暂无数据</li></ul>
+    </div>
+
+    <div class="card full">
+      <h2>游戏内消息</h2>
+      <ul id="chat"><li class="muted">暂无消息</li></ul>
+    </div>
+
+    <div class="card full">
+      <h2>运行日志</h2>
+      <ul id="logs"><li class="muted">暂无日志</li></ul>
+    </div>
+  </div>
+
+  <footer class="muted">
+    面板每 2 秒自动刷新 · 数据来自 AstrBot 插件
+  </footer>
+</main>
+
+<script type="module" src="./app.js"></script>
 </body>
 </html>

@@ -204,21 +204,23 @@ class MCAstrBot(Star):
 
     async def send_mc_text(self, text: str, target: str | None = None) -> None:
         limit = 240 - (6 + len(target)) if target else 240
+        segmented = bool(self.config.get("segmented_reply", True))
         pieces = split_reply(
-            text, bool(self.config.get("segmented_reply", True)),
+            text, segmented,
             int(self.config.get("split_threshold", 150)),
             str(self.config.get("split_mode", "regex")),
             str(self.config.get("split_regex", r"[。！？!?；;]+|\n+")),
             limit,
         )
         pieces = filter_reply(
-            pieces, bool(self.config.get("split_filter_enabled", False)),
+            pieces, segmented and bool(self.config.get("split_filter_enabled", False)),
             str(self.config.get("split_filter_regex", "")),
         )
         for index, piece in enumerate(pieces):
             if index:
-                base_ms = max(0, min(5000, int(self.config.get("split_interval_ms", 900))))
-                method = self.config.get("split_interval_method", "fixed")
+                configured_ms = self.config.get("split_interval_ms", 900) if segmented else 900
+                base_ms = max(0, min(5000, int(configured_ms)))
+                method = self.config.get("split_interval_method", "fixed") if segmented else "fixed"
                 if method == "random":
                     delay_ms = random.uniform(0, base_ms)
                 elif method == "logarithmic":
