@@ -3,13 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Fairy 监控面板</title>
+<title>MCBot 监控面板</title>
 <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
 <header>
-  <h1 id="pageTitle">🎮 Fairy 监控面板</h1>
+  <h1 id="pageTitle">🎮 MCBot 监控面板</h1>
   <span id="badge" class="badge"><span class="dot"></span><span id="badgeText">连接中</span></span>
+  <button id="controlButton" type="button" disabled>已停止</button>
+  <span id="controlError" class="control-error" role="status"></span>
   <span class="spacer"></span>
   <span class="muted" id="target"></span>
   <span class="muted" id="updated"></span>

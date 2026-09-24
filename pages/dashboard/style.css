@@ -15,6 +15,10 @@
     position:sticky; top:0; z-index:10;
   }
   header h1{font-size:17px; margin:0; font-weight:600}
+  #controlButton{background:var(--panel2); color:var(--fg); border:1px solid var(--accent); border-radius:6px; padding:5px 12px; cursor:pointer; font:inherit}
+  #controlButton:hover:not(:disabled){background:var(--line)}
+  #controlButton:disabled{opacity:.6; cursor:wait}
+  .control-error{color:var(--bad); font-size:12px}
   .badge{
     display:inline-flex; align-items:center; gap:7px;
     padding:4px 12px; border-radius:999px; font-size:12px; font-weight:600;

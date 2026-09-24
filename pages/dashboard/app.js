@@ -3,8 +3,11 @@ const $ = id => document.getElementById(id);
 const statusMap = {
   online: '在线', connecting: '连接中', reconnecting: '重连中',
   stopped: '已断开', starting: '启动中', bridge_stopped: '桥接已断开',
-  bridge_error: '桥接启动失败',
+  bridge_error: '桥接启动失败', user_stopped: '用户已停止',
 };
+let controlRunning = false;
+let controlPending = false;
+let controlReady = false;
 
 function fmtDur(ms) {
   if (!ms || ms < 0) return '-';
@@ -89,6 +92,12 @@ function renderLogs(logs) {
 async function refresh() {
   try {
     const data = await bridge.apiGet('status');
+    controlRunning = !!data.running;
+    controlReady = true;
+    $('controlButton').textContent = controlRunning ? '已启动' : '已停止';
+    $('controlButton').title = controlRunning ? '点击停止机器人' : '点击启动机器人';
+    $('controlButton').setAttribute('aria-pressed', String(controlRunning));
+    $('controlButton').disabled = controlPending;
     const snapshot = data.snapshot || {};
     const bot = snapshot.bot || {};
     const server = snapshot.server || {};
@@ -110,7 +119,6 @@ async function refresh() {
     txt('addr', address);
     txt('target', address);
     txt('ver', bot.version);
-    if (bot.username) $('pageTitle').textContent = `🎮 ${bot.username} 监控面板`;
 
     txt('pos', player.position ? `${player.position.x}, ${player.position.y}, ${player.position.z}` : '-');
     txt('dim', player.dimension);
@@ -130,11 +138,28 @@ async function refresh() {
     renderLogs(data.logs || []);
     txt('updated', `更新于 ${fmtTime(Date.now())}`);
   } catch (_) {
+    controlReady = false;
+    $('controlButton').disabled = true;
     $('badge').className = 'badge bad';
     txt('badgeText', '面板失联');
   }
 }
 
 await bridge.ready();
+$('controlButton').addEventListener('click', async () => {
+  if (controlPending || !controlReady) return;
+  controlPending = true;
+  $('controlButton').disabled = true;
+  $('controlError').textContent = '';
+  try {
+    await bridge.apiPost('control', { action: controlRunning ? 'stop' : 'start' });
+    await refresh();
+  } catch (error) {
+    txt('controlError', error.message || '启停失败');
+  } finally {
+    controlPending = false;
+    $('controlButton').disabled = !controlReady;
+  }
+});
 await refresh();
 setInterval(refresh, 2000);

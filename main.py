@@ -9,6 +9,7 @@ import re
 import time
 import uuid
 from collections import deque
+from contextlib import suppress
 from pathlib import Path
 
 from astrbot.api import logger
@@ -56,18 +57,69 @@ class MCAstrBot(Star):
         self.logs = deque(maxlen=100)
         self.last_snapshot: dict = {"bot": {"status": "starting", "online": False}}
         self.stopping = False
+        self.user_stopped = False
+        self.bridge_lock = asyncio.Lock()
         context.register_web_api(f"/{PLUGIN_NAME}/status", self.web_status, ["GET"], "MC 状态")
+        context.register_web_api(f"/{PLUGIN_NAME}/control", self.web_control, ["POST"], "启停 MC 机器人")
         context.register_web_api(f"/{PLUGIN_NAME}/say", self.web_say, ["POST"], "发送 MC 聊天")
         context.register_web_api(f"/{PLUGIN_NAME}/action", self.web_action, ["POST"], "控制 MC 机器人")
 
     async def initialize(self) -> None:
-        await self._launch_bridge()
-        if self.proc:
-            self.supervisor_task = asyncio.create_task(self._supervise_bridge())
+        await self.start_bridge()
+
+    async def start_bridge(self) -> bool:
+        async with self.bridge_lock:
+            if self.stopping:
+                raise RuntimeError("MC 插件正在停止")
+            self.user_stopped = False
+            if self.proc and self.proc.returncode is None:
+                return True
+            if self.supervisor_task:
+                self.supervisor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self.supervisor_task
+                self.supervisor_task = None
+            for task in (self.reader_task, self.stderr_task):
+                if task:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+            await self._launch_bridge()
+            if self.proc:
+                if not self.supervisor_task or self.supervisor_task.done():
+                    self.supervisor_task = asyncio.create_task(self._supervise_bridge())
+                return self.proc.returncode is None
+            return False
+
+    async def stop_bridge(self) -> None:
+        async with self.bridge_lock:
+            self.user_stopped = True
+            if self.supervisor_task:
+                self.supervisor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self.supervisor_task
+                self.supervisor_task = None
+            if self.proc and self.proc.returncode is None:
+                self.proc.terminate()
+                try:
+                    await asyncio.wait_for(self.proc.wait(), 3)
+                except asyncio.TimeoutError:
+                    self.proc.kill()
+                    await self.proc.wait()
+            for task in (self.reader_task, self.stderr_task):
+                if task:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+            self.proc = None
+            self.reader_task = None
+            self.stderr_task = None
+            self.last_snapshot = {"bot": {"status": "user_stopped", "online": False}}
 
     async def _launch_bridge(self) -> None:
         import os
 
+        self.proc = None
         host = str(self.config.get("server_host", "127.0.0.1")).strip()
         if not host:
             logger.warning("MC AstrBot: 未配置服务器地址")
@@ -101,31 +153,23 @@ class MCAstrBot(Star):
 
     async def _supervise_bridge(self) -> None:
         delay = 5
-        while not self.stopping and self.proc:
+        while not self.stopping and not self.user_stopped and self.proc:
             await self.proc.wait()
-            if self.stopping:
+            if self.stopping or self.user_stopped:
                 break
             logger.warning("MC AstrBot: 桥接进程退出，%s 秒后重启", delay)
             await asyncio.sleep(delay)
-            if self.stopping:
+            if self.stopping or self.user_stopped:
                 break
-            await self._launch_bridge()
+            async with self.bridge_lock:
+                if self.stopping or self.user_stopped:
+                    break
+                await self._launch_bridge()
             delay = min(60, delay * 2)
 
     async def terminate(self) -> None:
         self.stopping = True
-        if self.supervisor_task:
-            self.supervisor_task.cancel()
-        if self.proc and self.proc.returncode is None:
-            self.proc.terminate()
-            try:
-                await asyncio.wait_for(self.proc.wait(), 3)
-            except asyncio.TimeoutError:
-                self.proc.kill()
-                await self.proc.wait()
-        for task in (self.reader_task, self.stderr_task):
-            if task:
-                task.cancel()
+        await self.stop_bridge()
         for fut in self.pending.values():
             if not fut.done():
                 fut.set_exception(RuntimeError("MC 桥接已停止"))
@@ -158,7 +202,7 @@ class MCAstrBot(Star):
             for fut in self.pending.values():
                 if not fut.done():
                     fut.set_exception(RuntimeError("MC 桥接已断开"))
-            if not self.stopping:
+            if not self.stopping and not self.user_stopped:
                 logger.error("MC AstrBot: 桥接进程意外退出，请检查 Node 依赖与日志")
 
     async def _read_stderr(self) -> None:
@@ -196,11 +240,27 @@ class MCAstrBot(Star):
         msg.type = MessageType.GROUP_MESSAGE if channel == "public" else MessageType.FRIEND_MESSAGE
         msg.group = Group(group_id="mc-world", group_name="Minecraft 公屏") if channel == "public" else None
         msg.session_id = "mc-world" if channel == "public" else sender
-        msg.message_str = body
-        msg.message = [At(qq=msg.self_id), Plain(body)]
+        msg.message_str = f"[{sender}] {body}"
+        msg.message = [At(qq=msg.self_id), Plain(msg.message_str)]
         msg.raw_message = data
         event = MinecraftEvent(msg, self, channel, sender)
         self.context.get_event_queue().put_nowait(event)
+
+    def is_admin(self, username: str) -> bool:
+        name = username.strip().casefold()
+        return bool(name) and any(
+            isinstance(item, str) and item.strip().casefold() == name
+            for item in self.config.get("admin_ids", [])
+        )
+
+    def _can_use_llm_actions(self, event: AstrMessageEvent) -> bool:
+        sender = getattr(event, "mc_sender", None) or event.get_sender_id()
+        return (
+            event.get_platform_name() == "minecraft"
+            and bool(self.config.get("allow_llm_actions", False))
+            and bool(self.config.get("allow_admin_llm_actions", False))
+            and self.is_admin(sender)
+        )
 
     async def send_mc_text(self, text: str, target: str | None = None) -> None:
         limit = 240 - (6 + len(target)) if target else 240
@@ -236,7 +296,23 @@ class MCAstrBot(Star):
             self.last_snapshot = await self.rpc("snapshot", timeout=3)
         except Exception:
             pass
-        return json_response({"snapshot": self.last_snapshot, "chat": list(self.recent)[-50:], "logs": list(self.logs)[-50:]})
+        running = bool(not self.user_stopped and self.proc and self.proc.returncode is None)
+        return json_response({"running": running, "snapshot": self.last_snapshot, "chat": list(self.recent)[-50:], "logs": list(self.logs)[-50:]})
+
+    async def web_control(self):
+        payload = await request.json(default={})
+        action = payload.get("action")
+        if action not in ("start", "stop"):
+            return error_response("不支持的操作")
+        try:
+            if action == "start":
+                if not await self.start_bridge():
+                    return error_response("MC 桥接启动失败", status_code=503)
+            else:
+                await self.stop_bridge()
+            return json_response({"running": bool(self.proc and self.proc.returncode is None)})
+        except Exception as exc:
+            return error_response(str(exc), status_code=503)
 
     async def web_say(self):
         payload = await request.json(default={})
@@ -269,7 +345,7 @@ class MCAstrBot(Star):
         Args:
             username(string): 玩家名
         """
-        if event.get_platform_name() != "minecraft" or not self.config.get("allow_llm_actions", True):
+        if not self._can_use_llm_actions(event):
             return
         try:
             result = await self.rpc("look_at_player", {"username": username})
@@ -284,7 +360,7 @@ class MCAstrBot(Star):
         Args:
             radius(number): 扫描半径，范围 1 到 24
         """
-        if event.get_platform_name() != "minecraft" or not self.config.get("allow_llm_actions", True):
+        if not self._can_use_llm_actions(event):
             return
         try:
             result = await self.rpc("scan", {"radius": max(1, min(24, int(radius)))})
@@ -301,7 +377,7 @@ class MCAstrBot(Star):
             y(number): 目标 Y 坐标
             z(number): 目标 Z 坐标
         """
-        if event.get_platform_name() != "minecraft" or not self.config.get("allow_llm_actions", True):
+        if not self._can_use_llm_actions(event):
             return
         try:
             coords = [float(x), float(y), float(z)]
