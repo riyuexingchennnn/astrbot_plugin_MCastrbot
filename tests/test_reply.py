@@ -1,4 +1,6 @@
 import unittest
+import json
+from pathlib import Path
 
 from reply import filter_reply, split_reply
 
@@ -16,6 +18,26 @@ class SplitReplyTest(unittest.TestCase):
         pieces = split_reply(original, False, 150, "length", "")
         self.assertEqual([len(piece) for piece in pieces], [240, 240, 40])
         self.assertEqual("".join(pieces), original)
+
+    def test_default_regex_preserves_long_unpunctuated_text(self):
+        schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text())
+        pattern = schema["split_regex"]["default"]
+        self.assertEqual(pattern, r".*?[。？！~…\n]+|.+$")
+        original = "无标点的长文本" * 100
+        pieces = split_reply(original, True, 10, "regex", pattern)
+        self.assertGreater(len(pieces), 1)
+        self.assertTrue(all(0 < len(piece) <= 240 for piece in pieces))
+        self.assertEqual("".join(pieces), original)
+        print(f"无句末标点：{len(pieces)} 段，原文/重组={len(original)}/{len(''.join(pieces))} 字")
+
+    def test_schema_labels_have_no_fake_indentation(self):
+        schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text())
+        for name, item in schema.items():
+            self.assertTrue(item.get("description"), name)
+            self.assertNotIn("\u3000", item["description"], name)
+            hint = item.get("hint", "")
+            self.assertNotIn("\u3000", hint, name)
+            self.assertLessEqual(len(hint), 30, name)
 
     def test_invalid_regex_falls_back(self):
         pieces = split_reply("hello world", True, 0, "regex", "[")

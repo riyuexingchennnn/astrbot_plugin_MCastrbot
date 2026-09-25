@@ -18,7 +18,6 @@ module.exports = {
   keepAlive: { enabled: true, intervalMs: 45000 },
   chatHistoryLimit: 100,
   conversation: {
-    askRegex: source.ask_message_regex || '',
     tellRegex: source.tell_message_regex || '',
   },
 };

@@ -75,6 +75,13 @@ class FairyBot extends EventEmitter {
   }
 
   wire(bot) {
+    if (config.conversation.tellRegex && bot.addChatPattern) {
+      try {
+        bot.addChatPattern('whisper', new RegExp(config.conversation.tellRegex), { deprecated: true });
+      } catch (error) {
+        this.log('warn', `tell 自定义消息正则无效: ${error.message}`);
+      }
+    }
     bot.on('login', () => {
       this.log('sys', '握手完成，已通过登录校验');
     });
@@ -122,11 +129,7 @@ class FairyBot extends EventEmitter {
       const text = safe(() => jsonMsg.toString(), '');
       if (!text || !text.trim()) return;
       this.pushChat('server', text.trim());
-      this.parseConversation(text.trim());
-    });
-
-    bot.on('chat', (username, message) => {
-      this.receiveConversation('public', username, message);
+      this.parseConversation(jsonMsg);
     });
 
     bot.on('whisper', (username, message) => {
@@ -276,38 +279,25 @@ class FairyBot extends EventEmitter {
     this.emit('chat', item);
   }
 
-  parseConversation(text) {
-    let match = text.match(/^<([A-Za-z0-9_]{1,16})>\s+(.+)$/);
-    if (match) return this.receiveConversation('public', match[1], match[2]);
-    match = text.match(/^\[?([A-Za-z0-9_]{1,16})\s*(?:->|→|悄悄地对你说|对你说)\s*(?:你|me|Fairy)?\]?\s*[:：]?\s*(.+)$/i);
-    if (match) return this.receiveConversation('tell', match[1], match[2]);
-    match = text.match(/^\[?(?:ask|提问)\]?\s*([A-Za-z0-9_]{1,16})\s*[:：]\s*(.+)$/i);
-    if (match) return this.receiveConversation('ask', match[1], match[2]);
-    match = text.match(/^([A-Za-z0-9_]{1,16})\s*(?:asks? you|问你|向你提问)\s*[:：]\s*(.+)$/i);
-    if (match) return this.receiveConversation('ask', match[1], match[2]);
-    for (const [channel, pattern] of [
-      ['ask', config.conversation.askRegex], ['tell', config.conversation.tellRegex],
-    ]) {
-      if (!pattern) continue;
-      try {
-        const custom = text.match(new RegExp(pattern));
-        if (custom?.groups?.username && custom.groups.message) {
-          return this.receiveConversation(channel, custom.groups.username, custom.groups.message);
-        }
-      } catch (e) {
-        this.log('warn', `${channel} 自定义消息正则无效: ${e.message}`);
-      }
+  parseConversation(jsonMsg) {
+    const raw = jsonMsg?.json;
+    if (raw?.translate !== 'chat.type.text' || !Array.isArray(raw.with) || raw.with.length !== 2) return;
+    const [sender, message] = raw.with;
+    const username = typeof sender === 'string' ? sender : sender?.text;
+    const body = typeof message === 'string' ? message : message?.text;
+    if (typeof username === 'string' && typeof body === 'string') {
+      this.receiveConversation('public', username, body);
     }
   }
 
   receiveConversation(channel, username, message) {
-    if (!username || username.toLowerCase() === config.bot.username.toLowerCase() || !message?.trim()) return;
+    if (!['public', 'tell'].includes(channel) || !username || username.toLowerCase() === config.bot.username.toLowerCase() || !message?.trim()) return;
     // 公聊必须来自当前在线玩家，避免 <Server> 一类系统广播进入对话流水线。
     if (channel === 'public' && !Object.keys(this.bot?.players || {}).some(
       name => name.toLowerCase() === username.toLowerCase()
     )) return;
     const body = message.trim().slice(0, 500);
-    const key = `${channel}|${username}|${body}`;
+    const key = `${channel}|${username.toLowerCase()}|${body}`;
     const now = Date.now();
     if (now - (this.recentConversations.get(key) || 0) < 1500) return;
     this.recentConversations.set(key, now);
@@ -317,7 +307,6 @@ class FairyBot extends EventEmitter {
       }
     }
     const item = { at: now, channel, username, text: body };
-    this.pushChat(channel, `<${username}> ${body}`);
     this.emit('conversation', item);
   }
 

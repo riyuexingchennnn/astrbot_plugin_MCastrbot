@@ -36,11 +36,34 @@ class MinecraftEvent(AstrMessageEvent):
         self.mc_sender = sender
 
     async def send(self, message: MessageChain) -> None:
-        await super().send(message)
         text = message.get_plain_text().strip()
-        if text:
-            target = self.mc_sender if self.mc_channel in ("ask", "tell") else None
-            await self.plugin.send_mc_text(text, target)
+        if not text:
+            logger.warning("MC AstrBot: 跳过空回复（消息链无纯文本，玩家=%s）", self.mc_sender)
+            return
+        target = self.mc_sender if self.mc_channel == "tell" else None
+        await self.plugin.send_mc_text(text, target)
+        await super().send(message)
+
+    async def send_streaming(self, generator, use_fallback: bool = False) -> None:
+        pending = []
+        sent = False
+        async for message in generator:
+            if message is None:
+                continue
+            if message.type == "break":
+                if pending:
+                    await self.send(MessageChain().message("".join(pending)))
+                    sent = True
+                    pending.clear()
+                continue
+            text = message.get_plain_text()
+            if text:
+                pending.append(text)
+        if pending:
+            await self.send(MessageChain().message("".join(pending)))
+            sent = True
+        if not sent:
+            logger.warning("MC AstrBot: 流式回复无可发送的纯文本（玩家=%s）", self.mc_sender)
 
 
 class MCAstrBot(Star):
@@ -135,7 +158,6 @@ class MCAstrBot(Star):
             "login_password": self.config.get("login_password", ""),
             "resting_mode": self.config.get("resting_mode", "spectator"),
             "llm_max_move_distance": self.config.get("llm_max_move_distance", 32),
-            "ask_message_regex": self.config.get("ask_message_regex", ""),
             "tell_message_regex": self.config.get("tell_message_regex", ""),
         }, ensure_ascii=False)
         try:
@@ -230,9 +252,15 @@ class MCAstrBot(Star):
         channel = data.get("channel")
         sender = str(data.get("username", ""))
         body = str(data.get("text", "")).strip()
-        if channel not in ("public", "ask", "tell") or not re.fullmatch(r"[A-Za-z0-9_]{1,16}", sender) or not body:
+        if channel not in ("public", "tell") or not re.fullmatch(r"[A-Za-z0-9_]{1,16}", sender) or not body:
             return
         if channel == "public" and not self.config.get("public_auto_reply", True):
+            return
+        keywords = self.config.get("wake_keywords", ["Fairy"])
+        if keywords and not any(
+            isinstance(keyword, str) and keyword and keyword.casefold() in body.casefold()
+            for keyword in keywords
+        ):
             return
         msg = AstrBotMessage()
         msg.self_id = str(self.config.get("bot_name", "Fairy"))
@@ -241,8 +269,8 @@ class MCAstrBot(Star):
         msg.type = MessageType.GROUP_MESSAGE if channel == "public" else MessageType.FRIEND_MESSAGE
         msg.group = Group(group_id="mc-world", group_name="Minecraft 公屏") if channel == "public" else None
         msg.session_id = "mc-world" if channel == "public" else sender
-        msg.message_str = f"[{sender}] {body}"
-        msg.message = [At(qq=msg.self_id), Plain(msg.message_str)]
+        msg.message_str = body
+        msg.message = [At(qq=msg.self_id), Plain(body)]
         msg.raw_message = data
         event = MinecraftEvent(msg, self, channel, sender)
         self.context.get_event_queue().put_nowait(event)
@@ -270,13 +298,16 @@ class MCAstrBot(Star):
             text, segmented,
             int(self.config.get("split_threshold", 150)),
             str(self.config.get("split_mode", "regex")),
-            str(self.config.get("split_regex", r"[。！？!?；;]+|\n+")),
+            str(self.config.get("split_regex", r".*?[。？！~…\n]+|.+$")),
             limit,
         )
         pieces = filter_reply(
             pieces, segmented and bool(self.config.get("split_filter_enabled", False)),
             str(self.config.get("split_filter_regex", "")),
         )
+        if not pieces:
+            logger.warning("MC AstrBot: 跳过空回复（分段或过滤后无文本）")
+            return
         for index, piece in enumerate(pieces):
             if index:
                 configured_ms = self.config.get("split_interval_ms", 900) if segmented else 900

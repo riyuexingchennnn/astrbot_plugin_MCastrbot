@@ -1,49 +1,60 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const EventEmitter = require('node:events');
+const ChatMessage = require('prismarine-chat')(require('minecraft-data')('1.21.4'));
 const { FairyBot } = require('../mc_bot');
 const config = require('../config');
 
-test('public, tell and ask messages are classified and duplicate chat is suppressed', () => {
+function wiredBot() {
   const bot = new FairyBot();
-  bot.bot = { players: { Alex: { username: 'Alex' } } };
-  const received = [];
-  bot.on('conversation', item => received.push(item));
-  bot.parseConversation('<Alex> hello');
-  bot.receiveConversation('public', 'Alex', 'hello');
-  bot.parseConversation('[Alex -> Fairy] secret');
-  bot.parseConversation('[ask] Alex: help');
-  bot.parseConversation('<Fairy> own response');
-  assert.deepEqual(received.map(item => item.channel), ['public', 'tell', 'ask']);
-  assert.deepEqual(received.map(item => item.username), ['Alex', 'Alex', 'Alex']);
+  const client = new EventEmitter();
+  client.players = { Alex: { username: 'Alex' } };
+  client.addChatPattern = () => {};
+  bot.wire(client);
+  bot.bot = client;
+  const conversations = [];
+  bot.on('conversation', item => conversations.push(item));
+  return { bot, client, conversations };
+}
+
+test('structured player chat is accepted once, including case-insensitive online name', () => {
+  const { client, conversations } = wiredBot();
+  const jsonMsg = new ChatMessage({ translate: 'chat.type.text', with: ['aLeX', 'Fairy 你好'] });
+  console.log(`ChatMessage.json=${JSON.stringify(jsonMsg.json)}`);
+  client.emit('message', jsonMsg);
+  client.emit('chat', 'aLeX', 'Fairy 你好');
+  assert.equal(conversations.length, 1);
+  assert.equal(conversations[0].username, 'aLeX');
+  assert.equal(conversations[0].text, 'Fairy 你好');
+  console.log(`结构化在线玩家聊天：conversation=${conversations.length}，username=${conversations[0].username}`);
 });
 
-test('server broadcasts and departed players never become public conversations', () => {
-  const bot = new FairyBot();
-  bot.bot = { players: { Alex: { username: 'Alex' } } };
-  const received = [];
-  const publicChat = [];
-  bot.on('conversation', item => received.push(item));
-  bot.on('chat', item => { if (item.kind === 'public') publicChat.push(item); });
-  bot.parseConversation('<Server> 测试广播');
-  bot.parseConversation('<Departed> 已退出');
-  bot.parseConversation('<aLeX> 你好');
-  bot.parseConversation('<fAiRy> 自己的消息');
-  assert.deepEqual(received.map(item => item.username), ['aLeX']);
-  assert.equal(publicChat.length, 1);
+test('teleport announcement and Server chat are logged but never become conversations', () => {
+  const { bot, client, conversations } = wiredBot();
+  client.emit('message', new ChatMessage({ translate: 'commands.teleport.success.entity.single', with: ['Alex', 'Fairy'] }));
+  client.emit('message', new ChatMessage({ translate: 'chat.type.announcement', with: ['Alex', 'Teleported Alex to Fairy'] }));
+  client.emit('message', new ChatMessage({ translate: 'chat.type.text', with: ['Server', 'Fairy hello'] }));
+  assert.equal(conversations.length, 0);
+  assert.equal(bot.chatLog.length, 3);
+  console.log(`传送广播及 <Server>：conversation=${conversations.length}，聊天记录=${bot.chatLog.length}`);
 });
 
-test('custom ask format can route a mod message', () => {
-  const previous = config.conversation.askRegex;
-  config.conversation.askRegex = '^ASK from (?<username>\\w+): (?<message>.+)$';
+test('tell keeps its channel; custom tell pattern is registered without parsing system messages', () => {
+  const { client, conversations } = wiredBot();
+  client.emit('whisper', 'Alex', 'Fairy secret');
+  assert.deepEqual(conversations.map(item => item.channel), ['tell']);
+  const previous = config.conversation.tellRegex;
+  config.conversation.tellRegex = '^FROM (?<username>\\w+): (?<message>.+)$';
   try {
-    const bot = new FairyBot();
-    const received = [];
-    bot.on('conversation', item => received.push(item));
-    bot.parseConversation('ASK from Alex: where are you');
-    assert.equal(received[0].channel, 'ask');
-    assert.equal(received[0].text, 'where are you');
+    const extra = new EventEmitter();
+    extra.addChatPattern = (name, pattern, options) => {
+      assert.equal(name, 'whisper');
+      assert.equal(options.deprecated, true);
+      assert.match('FROM Alex: Fairy help', pattern);
+    };
+    new FairyBot().wire(extra);
   } finally {
-    config.conversation.askRegex = previous;
+    config.conversation.tellRegex = previous;
   }
 });
 
