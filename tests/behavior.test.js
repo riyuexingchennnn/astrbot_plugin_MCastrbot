@@ -26,37 +26,49 @@ function setup() {
   return { bot, controller, calls, clearHostiles: () => { entities = []; } };
 }
 
-test('auto attacks hostiles, resumes following, and idle stops autonomous actions', () => {
+test('auto attacks hostiles without following, and idle stops autonomous actions', () => {
   const { bot, controller, calls, clearHostiles } = setup();
-  assert.equal(controller.setMode('auto', 'Alex').mode, 'auto');
+  assert.equal(controller.setMode('auto').mode, 'auto');
+  assert.equal(controller.status().target, null);
   controller.tick(bot);
   assert.deepEqual(calls.filter(([kind]) => kind === 'attack'), [['attack', 8]]);
   clearHostiles();
   controller.tick(bot);
-  assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, 1);
+  assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, 0);
   controller.setMode('idle');
   controller.tick(bot);
   assert.equal(controller.status().mode, 'idle');
-  assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, 1);
+  assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, 0);
   assert.deepEqual(calls.filter(([kind]) => kind === 'chat'), []);
 });
 
 test('follow mode excludes combat and requires a valid target', () => {
   const { bot, controller, calls } = setup();
-  assert.throws(() => controller.setMode('auto', '../server'), /玩家名/);
+  assert.throws(() => controller.setMode('follow', '../server'), /玩家名/);
   controller.setMode('follow', 'Alex');
   controller.tick(bot);
   assert.equal(calls.filter(([kind]) => kind === 'attack').length, 0);
   assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, 1);
 });
 
-test('auto combat can be disabled without disabling following', () => {
+test('combat toggle switches to combat-only mode and leaves follow when disabled', () => {
   const { bot, controller, calls } = setup();
-  controller.setMode('auto', 'Alex');
-  controller.setAutoCombat(false);
+  controller.setMode('follow', 'Alex');
   controller.tick(bot);
-  assert.equal(calls.filter(([kind]) => kind === 'attack').length, 0);
   assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, 1);
+  controller.setAutoCombat(true);
+  assert.equal(controller.status().mode, 'auto');
+  assert.equal(controller.status().target, null);
+  controller.tick(bot);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'attack'), [['attack', 8]]);
+  controller.setAutoCombat(false);
+  assert.equal(controller.status().mode, 'idle');
+  controller.tick(bot);
+  assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, 1);
+  controller.setMode('follow', 'Alex');
+  controller.setAutoCombat(false);
+  assert.equal(controller.status().mode, 'follow');
+  assert.equal(controller.status().autoCombat, false);
 });
 
 test('LLM can select a nearby mob or player while auto combat still targets hostiles', async () => {
@@ -114,6 +126,43 @@ test('follow catches up to a distant online player with a throttled teleport', (
   controller.tick(bot);
   assert.deepEqual(calls.filter(([kind, line]) => kind === 'chat' && line.startsWith('/tp')),
     [['chat', '/tp Fairy Alex']]);
+});
+
+test('sleep enters idle before using the bed and does not resume combat or following', async () => {
+  for (const mode of ['auto', 'follow']) {
+    const { bot, controller, calls } = setup();
+    bot.version = '1.21.4';
+    controller.setMode(mode, mode === 'follow' ? 'Alex' : '');
+    controller.tick(bot);
+    const attacksBefore = calls.filter(([kind]) => kind === 'attack').length;
+    const followsBefore = calls.filter(([kind, goal]) => kind === 'goal' && goal).length;
+    bot.findBlock = () => ({ position: new Vec3(1, 64, 1) });
+    bot.pathfinder.goto = async () => {};
+    bot.blockAt = () => ({ name: 'red_bed' });
+    bot.sleep = async () => {
+      assert.equal(controller.status().mode, 'idle');
+      assert.equal(controller.status().target, null);
+      controller.tick(bot);
+    };
+    assert.equal((await controller.sleep()).sleeping, true);
+    controller.tick(bot);
+    assert.equal(controller.status().mode, 'idle');
+    assert.equal(calls.filter(([kind]) => kind === 'attack').length, attacksBefore);
+    assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, followsBefore);
+  }
+});
+
+test('sleep keeps idle if no bed is found and does not interrupt another task', async () => {
+  const { bot, controller } = setup();
+  bot.version = '1.21.4';
+  bot.findBlock = () => null;
+  controller.setMode('follow', 'Alex');
+  await assert.rejects(controller.sleep(), /找不到床/);
+  assert.equal(controller.status().mode, 'idle');
+  assert.equal(controller.status().autoCombat, false);
+  controller.task = 'craft';
+  await assert.rejects(controller.sleep(), /正在执行 craft/);
+  assert.equal(controller.status().task, 'craft');
 });
 
 test('one-shot collection uses a bounded block search and returns the collected count', async () => {

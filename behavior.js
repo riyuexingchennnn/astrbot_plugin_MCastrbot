@@ -42,7 +42,7 @@ class BehaviorController {
     this.owner = owner;
     this.mode = 'idle';
     this.target = null;
-    this.autoCombat = true;
+    this.autoCombat = false;
     this.task = null;
     this.taskSerial = 0;
     this.timer = null;
@@ -128,8 +128,8 @@ class BehaviorController {
     mode = typeof mode === 'string' ? mode.trim().toLowerCase() : mode;
     username = typeof username === 'string' ? username.trim() : username;
     if (!MODES.has(mode)) throw new Error('行为模式只能是 idle、auto 或 follow');
-    if (mode !== 'idle') {
-      if (!PLAYER_NAME.test(username)) throw new Error('auto/follow 模式需要有效的目标玩家名');
+    if (mode === 'follow') {
+      if (!PLAYER_NAME.test(username)) throw new Error('follow 模式需要有效的目标玩家名');
       if (username.toLowerCase() === bot.username.toLowerCase()) throw new Error('不能跟随机器人自己');
     }
     this.taskSerial++;
@@ -139,7 +139,8 @@ class BehaviorController {
     this.task = null;
     this.stopMovement(bot);
     this.mode = mode;
-    this.target = mode === 'idle' ? null : username;
+    this.target = mode === 'follow' ? username : null;
+    this.autoCombat = mode === 'auto';
     this.lastCatchupAt = 0;
     if (mode !== 'idle') {
       this.requestSurvival(bot);
@@ -149,9 +150,11 @@ class BehaviorController {
   }
 
   setAutoCombat(enabled) {
-    const bot = this.online();
-    this.autoCombat = enabled;
-    if (!enabled && this.attackedEntity && this.manualAttackEntity === null) this.stopMovement(bot);
+    this.online();
+    if (typeof enabled !== 'boolean') throw new Error('自动战斗开关须为布尔值');
+    if (enabled) return this.setMode('auto');
+    if (this.mode === 'auto') return this.setMode('idle');
+    this.autoCombat = false;
     return this.status();
   }
 
@@ -291,6 +294,7 @@ class BehaviorController {
       }
     }
     if (this.attackedEntity) this.stopMovement(bot);
+    if (this.mode !== 'follow') return;
     const entry = Object.entries(bot.players || {}).find(([name]) => name.toLowerCase() === this.target.toLowerCase());
     const player = entry?.[1];
     if (player && (!player.entity || bot.entity.position.distanceTo(player.entity.position) >= 16)) {
@@ -360,6 +364,8 @@ class BehaviorController {
   }
 
   async sleep() {
+    if (this.task) throw new Error(`正在执行 ${this.task}，请稍后再试`);
+    this.setMode('idle');
     return this.runTask('sleep', async (bot, check) => {
       const beds = Object.values(minecraftData(bot.version).blocksByName).filter(block => block.name.endsWith('_bed'));
       const bed = bot.findBlock({ matching: beds.map(block => block.id), maxDistance: 16 });

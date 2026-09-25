@@ -139,6 +139,26 @@ def test_llm_action_permissions_require_both_switches_and_admin(monkeypatch, tmp
     assert not plugin._can_use_llm_actions(event)
 
 
+def test_mode_tool_only_uses_player_target_for_follow(monkeypatch, tmp_path):
+    MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
+    plugin = object.__new__(MCAstrBot)
+    plugin._can_use_llm_actions = lambda event: True
+    plugin.rpc = AsyncMock(return_value={"ok": True})
+    event = SimpleNamespace(mc_sender="Alex", get_sender_id=lambda: "Alex")
+
+    async def run():
+        await plugin.mc_set_mode(event, "auto", "Alex")
+        await plugin.mc_set_mode(event, "FOLLOW")
+        await plugin.mc_set_mode(event, "idle")
+
+    asyncio.run(run())
+    assert [call.args[:2] for call in plugin.rpc.await_args_list] == [
+        ("set_mode", {"mode": "auto", "username": ""}),
+        ("set_mode", {"mode": "FOLLOW", "username": "Alex"}),
+        ("set_mode", {"mode": "idle", "username": ""}),
+    ]
+
+
 def test_llm_tools_return_results_to_agent_instead_of_sending_them(monkeypatch, tmp_path):
     MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
     plugin = object.__new__(MCAstrBot)

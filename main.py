@@ -607,13 +607,14 @@ class MCAstrBot(Star):
 
     @filter.llm_tool(name="mc_set_mode")
     async def mc_set_mode(self, event: AstrMessageEvent, mode: str, username: str = ""):
-        """切换机器人行为模式。idle 停止自主动作并等待自然语言指令；auto 自动跟随目标玩家、攻击附近敌对生物并按优先顺序进食；follow 只跟随。
+        """切换机器人行为模式。idle 停止自主动作；auto 只自动攻击附近敌对生物并按优先顺序进食，不跟随玩家；follow 只跟随指定玩家。
 
         Args:
             mode(string): idle、auto 或 follow
-            username(string): auto/follow 的目标玩家名；留空时使用发出指令的玩家
+            username(string): follow 的目标玩家名；留空时使用发出指令的玩家，其他模式忽略
         """
-        target = username or (getattr(event, "mc_sender", None) or event.get_sender_id())
+        target = (username or (getattr(event, "mc_sender", None) or event.get_sender_id())) \
+            if isinstance(mode, str) and mode.strip().lower() == "follow" else ""
         return await self._behavior_tool(event, "set_mode", {"mode": mode, "username": target})
 
     @filter.llm_tool(name="mc_follow_player")
@@ -627,7 +628,7 @@ class MCAstrBot(Star):
 
     @filter.llm_tool(name="mc_set_auto_combat")
     async def mc_set_auto_combat(self, event: AstrMessageEvent, enabled: bool):
-        """开启或关闭 auto 模式中对附近敌对生物的自动战斗。
+        """开启自动战斗时切入只战斗不跟随的 auto 模式；关闭时从 auto 切回 idle，follow 模式保持跟随。
 
         Args:
             enabled(boolean): true 开启，false 关闭
@@ -710,12 +711,12 @@ class MCAstrBot(Star):
 
     @filter.llm_tool(name="mc_sleep")
     async def mc_sleep(self, event: AstrMessageEvent):
-        """寻找附近的床，走过去并睡觉。"""
+        """先切入 idle，停止自动战斗和跟随，再寻找附近的床睡觉。"""
         return await self._behavior_tool(event, "sleep", timeout=60)
 
     @filter.llm_tool(name="mc_go_to_bed")
     async def mc_go_to_bed(self, event: AstrMessageEvent):
-        """寻找附近的床并走过去睡觉。"""
+        """先切入 idle，停止自动战斗和跟随，再寻找附近的床睡觉。"""
         return await self._behavior_tool(event, "sleep", timeout=60)
 
     @filter.llm_tool(name="mc_eat")
