@@ -10,7 +10,12 @@
 <header>
   <h1 id="pageTitle">🎮 MCBot 监控面板</h1>
   <span id="badge" class="badge"><span class="dot"></span><span id="badgeText">连接中</span></span>
-  <button id="controlButton" type="button" disabled>已停止</button>
+  <label class="control-toggle" for="controlSwitch">
+    <span class="control-label">机器人</span>
+    <input id="controlSwitch" type="checkbox" role="switch" disabled />
+    <span class="control-track" aria-hidden="true"><span class="control-thumb"></span></span>
+    <span id="controlState" class="control-state">已停止</span>
+  </label>
   <span id="controlError" class="control-error" role="status"></span>
   <span class="spacer"></span>
   <span class="muted" id="target"></span>

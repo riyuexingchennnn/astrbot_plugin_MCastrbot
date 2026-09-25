@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -76,6 +77,7 @@ def test_send_streaming_delivers_text_once_and_skips_empty(monkeypatch, tmp_path
 
     async def chunks():
         yield MessageChain().message("你好")
+        yield SimpleNamespace(type="break")
         yield MessageChain().message("，Fairy")
 
     async def empty_chunks():
@@ -89,3 +91,24 @@ def test_send_streaming_delivers_text_once_and_skips_empty(monkeypatch, tmp_path
 
     asyncio.run(run())
     plugin.send_mc_text.assert_awaited_once_with("你好，Fairy", "Alex")
+
+
+def test_llm_tools_return_results_to_agent_instead_of_sending_them(monkeypatch, tmp_path):
+    MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
+    plugin = object.__new__(MCAstrBot)
+    plugin._can_use_llm_actions = lambda event: True
+    plugin.rpc = AsyncMock(side_effect=[
+        {"ok": True},
+        {"ok": True, "topBlocks": [{"name": "stone", "count": 5}]},
+        {"ok": True},
+    ])
+    plugin._validate_goto = AsyncMock(return_value={"x": 1, "y": 2, "z": 3})
+    event = SimpleNamespace()
+
+    async def run():
+        assert await plugin.mc_observe_player(event, "Alex") == "已看向玩家"
+        scan = await plugin.mc_scan_surroundings(event, 8)
+        assert json.loads(scan)["topBlocks"][0]["name"] == "stone"
+        assert json.loads(await plugin.mc_move_nearby(event, 1, 2, 3))["ok"]
+
+    asyncio.run(run())

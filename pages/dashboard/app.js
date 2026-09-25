@@ -9,6 +9,14 @@ let controlRunning = false;
 let controlPending = false;
 let controlReady = false;
 
+function renderControl() {
+  const control = $('controlSwitch');
+  control.checked = controlRunning;
+  control.disabled = controlPending || !controlReady;
+  control.title = controlRunning ? '滑动停止机器人' : '滑动启动机器人';
+  $('controlState').textContent = controlRunning ? '已启动' : '已停止';
+}
+
 function fmtDur(ms) {
   if (!ms || ms < 0) return '-';
   const seconds = Math.floor(ms / 1000);
@@ -94,10 +102,7 @@ async function refresh() {
     const data = await bridge.apiGet('status');
     controlRunning = !!data.running;
     controlReady = true;
-    $('controlButton').textContent = controlRunning ? '已启动' : '已停止';
-    $('controlButton').title = controlRunning ? '点击停止机器人' : '点击启动机器人';
-    $('controlButton').setAttribute('aria-pressed', String(controlRunning));
-    $('controlButton').disabled = controlPending;
+    if (!controlPending) renderControl();
     const snapshot = data.snapshot || {};
     const bot = snapshot.bot || {};
     const server = snapshot.server || {};
@@ -139,26 +144,32 @@ async function refresh() {
     txt('updated', `更新于 ${fmtTime(Date.now())}`);
   } catch (_) {
     controlReady = false;
-    $('controlButton').disabled = true;
+    if (!controlPending) renderControl();
     $('badge').className = 'badge bad';
     txt('badgeText', '面板失联');
   }
 }
 
 await bridge.ready();
-$('controlButton').addEventListener('click', async () => {
-  if (controlPending || !controlReady) return;
+$('controlSwitch').addEventListener('change', async event => {
+  const desiredRunning = event.currentTarget.checked;
+  if (controlPending || !controlReady) {
+    renderControl();
+    return;
+  }
   controlPending = true;
-  $('controlButton').disabled = true;
+  event.currentTarget.disabled = true;
+  $('controlState').textContent = desiredRunning ? '启动中' : '停止中';
   $('controlError').textContent = '';
   try {
-    await bridge.apiPost('control', { action: controlRunning ? 'stop' : 'start' });
+    const result = await bridge.apiPost('control', { action: desiredRunning ? 'start' : 'stop' });
+    controlRunning = !!result.running;
     await refresh();
   } catch (error) {
     txt('controlError', error.message || '启停失败');
   } finally {
     controlPending = false;
-    $('controlButton').disabled = !controlReady;
+    renderControl();
   }
 });
 await refresh();

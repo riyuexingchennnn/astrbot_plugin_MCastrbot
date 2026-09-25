@@ -124,7 +124,10 @@ class FairyBot extends EventEmitter {
       this.pushChat('server', text.trim());
     });
 
-    bot.on('chat', (username, message) => {
+    bot.on('chat', (username, message, _translate, originalMsg) => {
+      // mineflayer 的宽松旧版聊天正则也会把 [玩家: 指令回执] 解析成玩家发言。
+      const originalText = safe(() => originalMsg?.toString().trim(), '');
+      if (/^\[[A-Za-z0-9_]{1,16}:\s.+\]$/.test(originalText)) return;
       this.receiveConversation('public', username, message);
     });
 

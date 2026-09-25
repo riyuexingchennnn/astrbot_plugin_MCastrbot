@@ -19,6 +19,16 @@ class SplitReplyTest(unittest.TestCase):
         self.assertEqual([len(piece) for piece in pieces], [240, 240, 40])
         self.assertEqual("".join(pieces), original)
 
+    def test_enabled_reply_splits_above_threshold_even_below_mc_limit(self):
+        original = "甲" * 90 + "。" + "乙" * 90 + "。"
+        self.assertEqual(len(original), 182)
+        regex_parts = split_reply(original, True, 150, "regex", r".*?[。]+|.+$")
+        self.assertEqual(regex_parts, ["甲" * 90 + "。", "乙" * 90 + "。"])
+        length_parts = split_reply(original, True, 150, "length", "")
+        self.assertEqual([len(part) for part in length_parts], [150, 32])
+        self.assertEqual("".join(length_parts), original)
+        self.assertEqual(split_reply(original[:140], True, 150, "regex", r".*?[。]+|.+$"), [original[:140]])
+
     def test_default_regex_preserves_long_unpunctuated_text(self):
         schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text(encoding="utf-8"))
         pattern = schema["segmentation"]["items"]["split_regex"]["default"]

@@ -46,23 +46,15 @@ class MinecraftEvent(AstrMessageEvent):
 
     async def send_streaming(self, generator, use_fallback: bool = False) -> None:
         pending = []
-        sent = False
         async for message in generator:
-            if message is None:
-                continue
-            if message.type == "break":
-                if pending:
-                    await self.send(MessageChain().message("".join(pending)))
-                    sent = True
-                    pending.clear()
+            if message is None or message.type == "break":
                 continue
             text = message.get_plain_text()
             if text:
                 pending.append(text)
         if pending:
             await self.send(MessageChain().message("".join(pending)))
-            sent = True
-        if not sent:
+        else:
             logger.warning("MC AstrBot: 流式回复无可发送的纯文本（玩家=%s）", self.mc_sender)
 
 
@@ -462,12 +454,12 @@ class MCAstrBot(Star):
             username(string): 玩家名
         """
         if not self._can_use_llm_actions(event):
-            return
+            return "当前会话无权控制 Minecraft 机器人。"
         try:
             result = await self.rpc("look_at_player", {"username": username})
-            yield event.plain_result("已看向玩家" if result.get("ok") else str(result))
+            return "已看向玩家" if result.get("ok") else str(result)
         except Exception as exc:
-            yield event.plain_result(f"看向玩家失败：{exc}")
+            return f"看向玩家失败：{exc}"
 
     @filter.llm_tool(name="mc_scan_surroundings")
     async def mc_scan_surroundings(self, event: AstrMessageEvent, radius: int):
@@ -477,12 +469,12 @@ class MCAstrBot(Star):
             radius(number): 扫描半径，范围 1 到 24
         """
         if not self._can_use_llm_actions(event):
-            return
+            return "当前会话无权控制 Minecraft 机器人。"
         try:
             result = await self.rpc("scan", {"radius": max(1, min(24, int(radius)))})
-            yield event.plain_result(json.dumps(result, ensure_ascii=False)[:3000])
+            return json.dumps(result, ensure_ascii=False)[:3000]
         except Exception as exc:
-            yield event.plain_result(f"扫描失败：{exc}")
+            return f"扫描失败：{exc}"
 
     @filter.llm_tool(name="mc_move_nearby")
     async def mc_move_nearby(self, event: AstrMessageEvent, x: float, y: float, z: float):
@@ -494,10 +486,10 @@ class MCAstrBot(Star):
             z(number): 目标 Z 坐标
         """
         if not self._can_use_llm_actions(event):
-            return
+            return "当前会话无权控制 Minecraft 机器人。"
         try:
             args = await self._validate_goto({"x": x, "y": y, "z": z})
             result = await self.rpc("goto", args, timeout=8)
-            yield event.plain_result(json.dumps(result, ensure_ascii=False))
+            return json.dumps(result, ensure_ascii=False)
         except Exception as exc:
-            yield event.plain_result(f"移动失败：{exc}")
+            return f"移动失败：{exc}"

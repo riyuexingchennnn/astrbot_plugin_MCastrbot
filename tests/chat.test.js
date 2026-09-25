@@ -60,6 +60,13 @@ test('captured system message and Server announcement never become conversations
   console.log(`真实系统抓包及 <Server>：conversation=${conversations.length}，面板条目=${bot.chatLog.length}`);
 });
 
+test('command feedback attributed to an online player is not treated as chat', () => {
+  const { bot, client, conversations } = wiredBot();
+  serverPacket(client, { text: '[ProbeZZ: Teleported ProbeZZ to Fairy]' });
+  assert.equal(conversations.length, 0);
+  assert.equal(bot.chatLog.length, 1);
+});
+
 test('only online players are accepted, case insensitive, on both channels', () => {
   const { client, conversations } = wiredBot();
   client.emit('chat', 'pRoBeZz', 'hello');

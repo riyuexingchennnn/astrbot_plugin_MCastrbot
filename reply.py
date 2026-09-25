@@ -10,6 +10,8 @@ def split_reply(text: str, enabled: bool, threshold: int, mode: str, pattern: st
     limit = max(1, min(240, limit))
     if not enabled or len(text) <= max(0, threshold):
         return [text[i:i + limit] for i in range(0, len(text), limit)]
+    # 超过阈值后，以阈值作为目标段长；任何一段仍不能超过 MC 限制。
+    target = min(limit, threshold) if threshold > 0 else limit
     if mode == "regex":
         try:
             matches = list(re.finditer(pattern, text))
@@ -30,7 +32,7 @@ def split_reply(text: str, enabled: bool, threshold: int, mode: str, pattern: st
     current = ""
     for unit in units:
         while unit:
-            space = limit - len(current)
+            space = target - len(current)
             if len(unit) <= space:
                 current += unit
                 break
@@ -38,8 +40,8 @@ def split_reply(text: str, enabled: bool, threshold: int, mode: str, pattern: st
                 result.append(current.strip())
                 current = ""
                 continue
-            result.append(unit[:limit].strip())
-            unit = unit[limit:]
+            result.append(unit[:target].strip())
+            unit = unit[target:]
     if current.strip():
         result.append(current.strip())
     return [part for part in result if part]
