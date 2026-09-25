@@ -13,7 +13,7 @@ module.exports = {
     retryDelayMs: 2500,
   },
   restingMode: source.resting_mode ?? 'spectator',
-  maxMoveDistance: Math.max(1, Math.min(128, number('llm_max_move_distance', 32))),
+  maxMoveDistance: 32,
   reconnect: { baseDelayMs: 5000, maxDelayMs: 60000, factor: 1.7 },
   keepAlive: { enabled: true, intervalMs: 45000 },
   chatHistoryLimit: 100,

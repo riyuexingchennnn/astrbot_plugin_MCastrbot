@@ -36,6 +36,32 @@ def test_only_body_wakes_and_channel_is_preserved(monkeypatch, tmp_path):
     plugin.config["wake_keywords"] = []
     asyncio.run(receive("public", "Alex", "没有唤醒词"))
     assert len(events) == 3
+    del plugin.config["wake_keywords"]
+    asyncio.run(receive("tell", "Alex", "默认不需要唤醒词"))
+    assert len(events) == 4
+
+
+def test_existing_segmentation_values_are_migrated_once(monkeypatch, tmp_path):
+    MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
+
+    class Config(dict):
+        def save_config(self):
+            self.saved = True
+
+    config = Config(segmentation={"split_threshold": 150}, split_threshold=80,
+                    split_mode="length", segmentation_migrated=False)
+    plugin = object.__new__(MCAstrBot)
+    plugin.config = config
+    plugin._migrate_segmentation_config()
+
+    assert config["segmentation"]["split_threshold"] == 80
+    assert config["segmentation"]["split_mode"] == "length"
+    assert config["segmentation_migrated"] is True
+    assert config.saved
+
+    config["split_threshold"] = 10
+    plugin._migrate_segmentation_config()
+    assert config["segmentation"]["split_threshold"] == 80
 
 
 def test_send_streaming_delivers_text_once_and_skips_empty(monkeypatch, tmp_path):

@@ -20,8 +20,8 @@ class SplitReplyTest(unittest.TestCase):
         self.assertEqual("".join(pieces), original)
 
     def test_default_regex_preserves_long_unpunctuated_text(self):
-        schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text())
-        pattern = schema["split_regex"]["default"]
+        schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text(encoding="utf-8"))
+        pattern = schema["segmentation"]["items"]["split_regex"]["default"]
         self.assertEqual(pattern, r".*?[。？！~…\n]+|.+$")
         original = "无标点的长文本" * 100
         pieces = split_reply(original, True, 10, "regex", pattern)
@@ -30,14 +30,19 @@ class SplitReplyTest(unittest.TestCase):
         self.assertEqual("".join(pieces), original)
         print(f"无句末标点：{len(pieces)} 段，原文/重组={len(original)}/{len(''.join(pieces))} 字")
 
-    def test_schema_labels_have_no_fake_indentation(self):
-        schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text())
-        for name, item in schema.items():
+    def test_schema_groups_segmentation_without_fake_indentation(self):
+        schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(schema["wake_keywords"]["default"], [])
+        group = schema["segmentation"]
+        self.assertEqual(group["type"], "object")
+        self.assertEqual(group["condition"], {"segmented_reply": True})
+        self.assertEqual(group["items"]["split_regex"]["condition"], {"split_mode": "regex"})
+        for name, item in group["items"].items():
             self.assertTrue(item.get("description"), name)
             self.assertNotIn("\u3000", item["description"], name)
             hint = item.get("hint", "")
             self.assertNotIn("\u3000", hint, name)
-            self.assertLessEqual(len(hint), 30, name)
+            self.assertFalse(item["description"].startswith("分段 · "), name)
 
     def test_invalid_regex_falls_back(self):
         pieces = split_reply("hello world", True, 0, "regex", "[")

@@ -70,6 +70,7 @@ class MCAstrBot(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context, config)
         self.config = config
+        self._migrate_segmentation_config()
         self.proc: asyncio.subprocess.Process | None = None
         self.reader_task: asyncio.Task | None = None
         self.stderr_task: asyncio.Task | None = None
@@ -89,6 +90,70 @@ class MCAstrBot(Star):
 
     async def initialize(self) -> None:
         await self.start_bridge()
+
+    def _migrate_segmentation_config(self) -> None:
+        """Copy existing flat reply settings into the grouped settings once."""
+        if self.config.get("segmentation_migrated"):
+            return
+        grouped = self.config.get("segmentation")
+        if not isinstance(grouped, dict):
+            grouped = {}
+            self.config["segmentation"] = grouped
+        for key in (
+            "split_threshold", "split_mode", "split_regex", "split_filter_enabled",
+            "split_filter_regex", "split_interval_method", "split_interval_ms",
+            "split_log_base",
+        ):
+            if key in self.config:
+                grouped[key] = self.config[key]
+        self.config["segmentation_migrated"] = True
+        if hasattr(self.config, "save_config"):
+            self.config.save_config()
+
+    async def _ensure_node_dependencies(self, directory: Path) -> bool:
+        """Install the locked bridge dependencies on the AstrBot host if absent."""
+        dependency_check = "require('mineflayer'); require('minecraft-data'); require('vec3')"
+        try:
+            probe = await asyncio.create_subprocess_exec(
+                "node", "-e", dependency_check,
+                cwd=str(directory), stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            if await probe.wait() == 0:
+                return True
+        except OSError as exc:
+            logger.error("MC AstrBot: 无法运行 Node.js: %s", exc)
+            return False
+
+        logger.info("MC AstrBot: 缺少 Node 依赖，正在插件目录执行 npm ci --omit=dev")
+        try:
+            installer = await asyncio.create_subprocess_exec(
+                "npm", "ci", "--omit=dev", "--no-audit", "--no-fund",
+                cwd=str(directory), stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            output, _ = await asyncio.wait_for(installer.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            installer.kill()
+            await installer.wait()
+            logger.error("MC AstrBot: npm 依赖安装超时；请在插件目录手动运行 npm ci --omit=dev")
+            return False
+        except OSError as exc:
+            logger.error("MC AstrBot: 无法运行 npm: %s；请在插件目录手动运行 npm ci --omit=dev", exc)
+            return False
+        if installer.returncode:
+            logger.error("MC AstrBot: npm 依赖安装失败（退出码 %s）：%s", installer.returncode, output.decode(errors="replace")[-2000:])
+            return False
+        probe = await asyncio.create_subprocess_exec(
+            "node", "-e", dependency_check, cwd=str(directory),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+        )
+        _, error = await probe.communicate()
+        if probe.returncode:
+            logger.error("MC AstrBot: 安装后仍无法加载 Node 依赖：%s", error.decode(errors="replace")[-2000:])
+            return False
+        logger.info("MC AstrBot: Node 依赖安装完成")
+        return True
 
     async def start_bridge(self) -> bool:
         async with self.bridge_lock:
@@ -148,6 +213,9 @@ class MCAstrBot(Star):
             logger.warning("MC AstrBot: 未配置服务器地址")
             return
         bridge = Path(__file__).with_name("bridge.js")
+        if not await self._ensure_node_dependencies(bridge.parent):
+            self.last_snapshot["bot"]["status"] = "dependency_error"
+            return
         env = dict(os.environ)
         env["MC_ASTRBOT_CONFIG"] = json.dumps({
             "host": host,
@@ -157,7 +225,6 @@ class MCAstrBot(Star):
             "auth": self.config.get("mc_auth", "offline"),
             "login_password": self.config.get("login_password", ""),
             "resting_mode": self.config.get("resting_mode", "spectator"),
-            "llm_max_move_distance": self.config.get("llm_max_move_distance", 32),
         }, ensure_ascii=False)
         try:
             self.proc = await asyncio.create_subprocess_exec(
@@ -255,7 +322,7 @@ class MCAstrBot(Star):
             return
         if channel == "public" and not self.config.get("public_auto_reply", True):
             return
-        keywords = self.config.get("wake_keywords", ["Fairy"])
+        keywords = self.config.get("wake_keywords", [])
         if keywords and not any(
             isinstance(keyword, str) and keyword and keyword.casefold() in body.casefold()
             for keyword in keywords
@@ -293,29 +360,30 @@ class MCAstrBot(Star):
     async def send_mc_text(self, text: str, target: str | None = None) -> None:
         limit = 240 - (6 + len(target)) if target else 240
         segmented = bool(self.config.get("segmented_reply", True))
+        settings = self.config.get("segmentation") or {}
         pieces = split_reply(
             text, segmented,
-            int(self.config.get("split_threshold", 150)),
-            str(self.config.get("split_mode", "regex")),
-            str(self.config.get("split_regex", r".*?[。？！~…\n]+|.+$")),
+            int(settings.get("split_threshold", 150)),
+            str(settings.get("split_mode", "regex")),
+            str(settings.get("split_regex", r".*?[。？！~…\n]+|.+$")),
             limit,
         )
         pieces = filter_reply(
-            pieces, segmented and bool(self.config.get("split_filter_enabled", False)),
-            str(self.config.get("split_filter_regex", "")),
+            pieces, segmented and bool(settings.get("split_filter_enabled", False)),
+            str(settings.get("split_filter_regex", "")),
         )
         if not pieces:
             logger.warning("MC AstrBot: 跳过空回复（分段或过滤后无文本）")
             return
         for index, piece in enumerate(pieces):
             if index:
-                configured_ms = self.config.get("split_interval_ms", 900) if segmented else 900
+                configured_ms = settings.get("split_interval_ms", 900) if segmented else 900
                 base_ms = max(0, min(5000, int(configured_ms)))
-                method = self.config.get("split_interval_method", "fixed") if segmented else "fixed"
+                method = settings.get("split_interval_method", "fixed") if segmented else "fixed"
                 if method == "random":
                     delay_ms = random.uniform(0, base_ms)
                 elif method == "logarithmic":
-                    log_base = max(1.1, float(self.config.get("split_log_base", 1.8)))
+                    log_base = max(1.1, float(settings.get("split_log_base", 1.8)))
                     delay_ms = min(5000, base_ms * math.log(max(2, len(piece)), log_base))
                 else:
                     delay_ms = base_ms
@@ -381,7 +449,7 @@ class MCAstrBot(Star):
         if not position:
             raise ValueError("当前无法读取机器人位置")
         distance = math.dist(coords, [position[axis] for axis in ("x", "y", "z")])
-        max_distance = max(1, min(128, int(self.config.get("llm_max_move_distance", 32))))
+        max_distance = 32
         if not math.isfinite(distance) or distance > max_distance:
             raise ValueError(f"目标超出 {max_distance} 格移动范围")
         return dict(zip(("x", "y", "z"), coords))
