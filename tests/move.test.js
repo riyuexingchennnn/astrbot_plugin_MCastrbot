@@ -7,10 +7,21 @@ const path = require('node:path');
 function bridgeWithLimit(maxMoveDistance) {
   const replies = [];
   const moves = [];
+  const actions = [];
   let onLine;
   class FakeBot {
     constructor() {
       this.bot = { entity: { position: { x: 10, y: 20, z: 30 } } };
+      this.behavior = {
+        status: () => ({ mode: 'idle' }),
+        setMode: (mode, username) => { actions.push(['mode', mode, username]); return { mode }; },
+        setAutoCombat: enabled => { actions.push(['combat', enabled]); return { autoCombat: enabled }; },
+        collect: (block, count) => { actions.push(['collect', block, count]); return { ok: true }; },
+        sleep: () => ({ ok: true }),
+        eat: () => ({ ok: true }),
+        store: () => ({ ok: true }),
+        fetch: () => ({ ok: true }),
+      };
     }
     on() {}
     start() {}
@@ -31,7 +42,7 @@ function bridgeWithLimit(maxMoveDistance) {
     },
     process: fakeProcess,
   });
-  return { onLine, replies, moves };
+  return { onLine, replies, moves, actions };
 }
 
 test('桥接 goto 受配置距离限制，并允许范围内移动', async () => {
@@ -51,4 +62,16 @@ test('桥接 goto 的独立硬上限为 512 格', async () => {
   await bridge.onLine(JSON.stringify({ id: 1, action: 'goto', args: { x: 523, y: 20, z: 30 } }));
   assert.match(bridge.replies[0].error, /超出 512 格/);
   assert.equal(bridge.moves.length, 0);
+});
+
+test('桥接行为工具路由到控制器并验证布尔参数', async () => {
+  const bridge = bridgeWithLimit(32);
+  await bridge.onLine(JSON.stringify({ id: 1, action: 'set_mode', args: { mode: 'auto', username: 'Alex' } }));
+  await bridge.onLine(JSON.stringify({ id: 2, action: 'set_auto_combat', args: { enabled: false } }));
+  await bridge.onLine(JSON.stringify({ id: 3, action: 'collect', args: { block: 'oak_log', count: 2 } }));
+  await bridge.onLine(JSON.stringify({ id: 4, action: 'set_auto_combat', args: { enabled: 'false' } }));
+  assert.deepEqual(bridge.actions, [['mode', 'auto', 'Alex'], ['combat', false], ['collect', 'oak_log', 2]]);
+  assert.deepEqual(bridge.replies.slice(0, 3).map(reply => reply.data),
+    [{ mode: 'auto' }, { autoCombat: false }, { ok: true }]);
+  assert.match(bridge.replies[3].error, /布尔值/);
 });

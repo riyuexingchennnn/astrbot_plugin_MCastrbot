@@ -2,6 +2,7 @@
 const mineflayer = require('mineflayer');
 const EventEmitter = require('events');
 const config = require('./config');
+const { BehaviorController } = require('./behavior');
 
 // 把可能抛异常的状态读取包起来。26.1.2 协议下 mineflayer 的部分字段
 // （health / food）解析不完整，会返回 undefined，这里统一兜底。
@@ -33,6 +34,7 @@ class FairyBot extends EventEmitter {
     this.observedPlayers = new Set();
     this.stopping = false;
     this.recentConversations = new Map();
+    this.behavior = new BehaviorController(this);
   }
 
   start() {
@@ -64,7 +66,9 @@ class FairyBot extends EventEmitter {
     let bot;
     try {
       bot = mineflayer.createBot(opt);
+      this.behavior.attach(bot);
     } catch (e) {
+      try { bot?.quit(); } catch (_) { /* 初始化失败 */ }
       this.lastError = `createBot 失败: ${e.message}`;
       this.log('error', this.lastError);
       this.scheduleReconnect();
@@ -90,6 +94,13 @@ class FairyBot extends EventEmitter {
       this.ensureKeepAlive();
       this.ensureViewer();
       this.ensureLogin();
+      try { this.behavior.spawn(bot); } catch (error) {
+        this.log('error', `自主行为初始化失败: ${error.message}`);
+      }
+      if (!config.login.enabled) {
+        if (this.behavior.mode === 'idle') this.applyRestingMode();
+        else this.behavior.requestSurvival(bot);
+      }
     });
 
     bot.on('end', (reason) => {
@@ -100,6 +111,7 @@ class FairyBot extends EventEmitter {
         this.onlineSince = null;
       }
       this.stopKeepAlive();
+      this.behavior.end(bot);
       this.teardownLogin();
       // 关键：渲染器绑在具体的 bot 实例上。实例一死，它还连着旧连接，
       // 新区块永远送不到浏览器。必须关掉并允许重连后重新挂载。
@@ -209,11 +221,13 @@ class FairyBot extends EventEmitter {
 
     const onMsg = (text) => {
       if (!text) return;
-      if (/注册成功|登录成功|已经登录/.test(text)) {
+      if (/注册成功|登录成功|已经登录|registered successfully|registration successful|login successful|successfully logged in|already logged in/i.test(text)) {
         done = true;
+        this.behavior.authReady = true;
         this.log('sys', '登录模组：已通过');
         // 登录通过之后再切模式，否则服务器会拒绝指令
-        this.applyRestingMode();
+        if (this.behavior.mode === 'idle') this.applyRestingMode();
+        else this.behavior.requestSurvival(bot);
         this.teardownLogin();
       } else if (/未注册|请先注册|not registered/i.test(text)) {
         this.log('sys', '登录模组：未注册，改发注册指令');
@@ -258,11 +272,13 @@ class FairyBot extends EventEmitter {
   // 切到常驻模式。观察者模式下机器人不占睡觉人数，也不参与实体碰撞，
   // 挂机时对服务器的干扰最小。登录成功之后调用。
   applyRestingMode() {
+    if (this.behavior.mode !== 'idle') return;
     const mode = config.restingMode;
     if (!mode) return;
+    const currentBot = this.bot;
     setTimeout(() => {
       const bot = this.bot;
-      if (!bot || !bot.entity) return;
+      if (!bot || bot !== currentBot || !bot.entity || this.behavior.mode !== 'idle') return;
       safe(() => bot.chat(`/gamemode ${mode}`));
       this.log('sys', `已请求切换到 ${mode} 模式`);
     }, 1500);
@@ -380,6 +396,7 @@ class FairyBot extends EventEmitter {
         players,
         entityCount: bot && bot.entities ? Object.keys(bot.entities).length : 0,
       },
+      behavior: this.behavior.status(),
       chat: this.chatLog.slice(-40).reverse(),
     };
   }
@@ -712,6 +729,7 @@ class FairyBot extends EventEmitter {
   stop() {
     this.stopping = true;
     this.stopKeepAlive();
+    this.behavior.end(this.bot);
     this.teardownLogin();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     try {

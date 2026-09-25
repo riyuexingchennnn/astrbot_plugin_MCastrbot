@@ -104,7 +104,11 @@ class MCAstrBot(Star):
 
     async def _ensure_node_dependencies(self, directory: Path) -> bool:
         """Install the locked bridge dependencies on the AstrBot host if absent."""
-        dependency_check = "require('mineflayer'); require('minecraft-data'); require('vec3')"
+        dependency_check = (
+            "require('mineflayer'); require('minecraft-data'); require('vec3'); "
+            "require('mineflayer-pathfinder'); require('mineflayer-pvp'); "
+            "require('mineflayer-collectblock'); require('mineflayer-armor-manager')"
+        )
         try:
             probe = await asyncio.create_subprocess_exec(
                 "node", "-e", dependency_check,
@@ -493,3 +497,77 @@ class MCAstrBot(Star):
             return json.dumps(result, ensure_ascii=False)
         except Exception as exc:
             return f"移动失败：{exc}"
+
+    async def _behavior_tool(self, event: AstrMessageEvent, action: str,
+                             args: dict | None = None, timeout: float = 10) -> str:
+        if not self._can_use_llm_actions(event):
+            return "当前会话无权控制 Minecraft 机器人。"
+        try:
+            result = await self.rpc(action, args or {}, timeout=timeout)
+            return json.dumps(result, ensure_ascii=False)
+        except Exception as exc:
+            return f"Minecraft 操作失败：{exc}"
+
+    @filter.llm_tool(name="mc_behavior_status")
+    async def mc_behavior_status(self, event: AstrMessageEvent):
+        """查询 Minecraft 机器人的行为模式、目标玩家、任务、血量、饱食度和 TPS。"""
+        return await self._behavior_tool(event, "behavior_status")
+
+    @filter.llm_tool(name="mc_set_mode")
+    async def mc_set_mode(self, event: AstrMessageEvent, mode: str, username: str = ""):
+        """切换机器人行为模式。idle 停止自主动作并等待自然语言指令；auto 自动跟随目标玩家、攻击附近敌对生物并在饥饿时吃面包；follow 只跟随。
+
+        Args:
+            mode(string): idle、auto 或 follow
+            username(string): auto/follow 的目标玩家名；留空时使用发出指令的玩家
+        """
+        target = username or (getattr(event, "mc_sender", None) or event.get_sender_id())
+        return await self._behavior_tool(event, "set_mode", {"mode": mode, "username": target})
+
+    @filter.llm_tool(name="mc_follow_player")
+    async def mc_follow_player(self, event: AstrMessageEvent, username: str):
+        """跟随指定 Minecraft 玩家，不主动战斗。
+
+        Args:
+            username(string): 要跟随的玩家名
+        """
+        return await self._behavior_tool(event, "set_mode", {"mode": "follow", "username": username})
+
+    @filter.llm_tool(name="mc_set_auto_combat")
+    async def mc_set_auto_combat(self, event: AstrMessageEvent, enabled: bool):
+        """开启或关闭 auto 模式中对附近敌对生物的自动战斗。
+
+        Args:
+            enabled(boolean): true 开启，false 关闭
+        """
+        return await self._behavior_tool(event, "set_auto_combat", {"enabled": enabled})
+
+    @filter.llm_tool(name="mc_collect_blocks")
+    async def mc_collect_blocks(self, event: AstrMessageEvent, block: str, count: int):
+        """收集机器人附近 16 格内指定类型的方块，数量最多 16 个。
+
+        Args:
+            block(string): 英文方块 ID，例如 oak_log
+            count(number): 收集数量，1 到 16
+        """
+        return await self._behavior_tool(event, "collect", {"block": block, "count": count}, timeout=120)
+
+    @filter.llm_tool(name="mc_sleep")
+    async def mc_sleep(self, event: AstrMessageEvent):
+        """寻找附近的床，走过去并睡觉。"""
+        return await self._behavior_tool(event, "sleep", timeout=60)
+
+    @filter.llm_tool(name="mc_eat")
+    async def mc_eat(self, event: AstrMessageEvent):
+        """从背包取面包并吃掉一个。"""
+        return await self._behavior_tool(event, "eat", timeout=30)
+
+    @filter.llm_tool(name="mc_store_inventory")
+    async def mc_store_inventory(self, event: AstrMessageEvent):
+        """走到附近箱子或木桶，把背包中的所有物品存入容器。"""
+        return await self._behavior_tool(event, "store", timeout=120)
+
+    @filter.llm_tool(name="mc_fetch_supplies")
+    async def mc_fetch_supplies(self, event: AstrMessageEvent):
+        """从附近箱子或木桶领取面包、最好的剑、斧和镐。"""
+        return await self._behavior_tool(event, "fetch", timeout=90)

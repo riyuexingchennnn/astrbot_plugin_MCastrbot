@@ -14,6 +14,17 @@ const allowed = {
   say: ({ text, target }) => { bot.sendChat(text, target || null); return { ok: true }; },
   look_at_player: ({ username }) => bot.lookAtPlayer(username),
   scan: ({ radius }) => bot.scan(Math.max(1, Math.min(24, Number(radius) || 12))),
+  behavior_status: () => bot.behavior.status(),
+  set_mode: ({ mode, username }) => bot.behavior.setMode(mode, username),
+  set_auto_combat: ({ enabled }) => {
+    if (typeof enabled !== 'boolean') throw new Error('enabled 必须是布尔值');
+    return bot.behavior.setAutoCombat(enabled);
+  },
+  collect: ({ block, count }) => bot.behavior.collect(block, count),
+  sleep: () => bot.behavior.sleep(),
+  eat: () => bot.behavior.eat(),
+  store: () => bot.behavior.store(),
+  fetch: () => bot.behavior.fetch(),
   goto: ({ x, y, z }) => {
     const coords = [x, y, z].map(Number);
     if ([x, y, z].some(value => value == null) || !coords.every(Number.isFinite)) {

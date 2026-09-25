@@ -107,6 +107,7 @@ async function refresh() {
     const bot = snapshot.bot || {};
     const server = snapshot.server || {};
     const player = snapshot.player || {};
+    const behavior = snapshot.behavior || {};
     const world = snapshot.world || {};
     const state = bot.status || 'stopped';
     const badge = $('badge');
@@ -128,6 +129,10 @@ async function refresh() {
     txt('pos', player.position ? `${player.position.x}, ${player.position.y}, ${player.position.z}` : '-');
     txt('dim', player.dimension);
     txt('mode', player.gameMode);
+    txt('behaviorMode', behavior.mode);
+    txt('behaviorTarget', behavior.target);
+    txt('behaviorTask', behavior.task);
+    txt('tps', behavior.tps);
     txt('health', player.health == null ? '协议不支持' : `${player.health}/20`);
     txt('food', player.food == null ? '协议不支持' : `${player.food}/20`);
     txt('entities', world.entityCount);
