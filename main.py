@@ -47,7 +47,7 @@ class MinecraftEvent(AstrMessageEvent):
     async def send_streaming(self, generator, use_fallback: bool = False) -> None:
         pending = []
         async for message in generator:
-            if message is None or message.type == "break":
+            if message is None or getattr(message, "type", None) == "break":
                 continue
             text = message.get_plain_text()
             if text:

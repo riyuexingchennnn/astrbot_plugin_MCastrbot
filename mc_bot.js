@@ -15,6 +15,20 @@ function safe(fn, fallback = null) {
   }
 }
 
+function isPlayerChat(username, message, translate, originalMsg, source) {
+  // mineflayer 的旧聊天正则也会解析系统广播。该服务器的玩家消息使用
+  // `<%s> %s`，标准聊天格式使用 `chat.type.text`；都要核对原始组件。
+  if (!['<%s> %s', 'chat.type.text'].includes(translate) ||
+      originalMsg?.translate !== translate || originalMsg.with?.length !== 2) return false;
+  const [sender, body] = originalMsg.with;
+  if (safe(() => sender.toString(), '') !== username ||
+      safe(() => body.toString(), '') !== message) return false;
+  if (translate === '<%s> %s') {
+    return ['system', 'chat'].includes(source) && sender.json?.insertion === username;
+  }
+  return source === 'chat';
+}
+
 class FairyBot extends EventEmitter {
   constructor() {
     super();
@@ -79,6 +93,12 @@ class FairyBot extends EventEmitter {
   }
 
   wire(bot) {
+    let currentMessage = null;
+    bot.prependListener('messagestr', (_text, source, originalMsg) => {
+      currentMessage = { source, originalMsg };
+      queueMicrotask(() => { currentMessage = null; });
+    });
+
     bot.on('login', () => {
       this.log('sys', '握手完成，已通过登录校验');
     });
@@ -136,10 +156,9 @@ class FairyBot extends EventEmitter {
       this.pushChat('server', text.trim());
     });
 
-    bot.on('chat', (username, message, _translate, originalMsg) => {
-      // mineflayer 的宽松旧版聊天正则也会把 [玩家: 指令回执] 解析成玩家发言。
-      const originalText = safe(() => originalMsg?.toString().trim(), '');
-      if (/^\[[A-Za-z0-9_]{1,16}:\s.+\]$/.test(originalText)) return;
+    bot.on('chat', (username, message, translate, originalMsg) => {
+      const source = currentMessage?.originalMsg === originalMsg ? currentMessage.source : null;
+      if (!isPlayerChat(username, message, translate, originalMsg, source)) return;
       this.receiveConversation('public', username, message);
     });
 

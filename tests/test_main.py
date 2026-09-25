@@ -93,6 +93,33 @@ def test_send_streaming_delivers_text_once_and_skips_empty(monkeypatch, tmp_path
     plugin.send_mc_text.assert_awaited_once_with("你好，Fairy", "Alex")
 
 
+def test_llm_action_permissions_require_both_switches_and_admin(monkeypatch, tmp_path):
+    MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
+    plugin = object.__new__(MCAstrBot)
+    plugin.config = {
+        "allow_llm_actions": True,
+        "allow_admin_llm_actions": True,
+        "admin_ids": ["Alex"],
+    }
+    event = SimpleNamespace(
+        mc_sender="alex",
+        get_platform_name=lambda: "minecraft",
+        get_sender_id=lambda: "alex",
+    )
+    assert plugin._can_use_llm_actions(event)
+    plugin.config["allow_llm_actions"] = False
+    assert not plugin._can_use_llm_actions(event)
+    plugin.config["allow_llm_actions"] = True
+    plugin.config["allow_admin_llm_actions"] = False
+    assert not plugin._can_use_llm_actions(event)
+    plugin.config["allow_admin_llm_actions"] = True
+    event.mc_sender = "Bob"
+    assert not plugin._can_use_llm_actions(event)
+    event.mc_sender = "Alex"
+    event.get_platform_name = lambda: "other"
+    assert not plugin._can_use_llm_actions(event)
+
+
 def test_llm_tools_return_results_to_agent_instead_of_sending_them(monkeypatch, tmp_path):
     MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
     plugin = object.__new__(MCAstrBot)

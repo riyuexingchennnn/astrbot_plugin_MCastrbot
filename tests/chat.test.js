@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const EventEmitter = require('node:events');
 const minecraftData = require('minecraft-data');
 const injectMineflayerChat = require('mineflayer/lib/plugins/chat');
+const ChatMessage = require('prismarine-chat')(minecraftData('1.21.4'));
 const { FairyBot } = require('../mc_bot');
 
 // 真实服务器抓包；原始抓包日期未提供（样本收录：2026-09-25）。click_event 的内部字段在提供的样本中
@@ -67,10 +68,37 @@ test('command feedback attributed to an online player is not treated as chat', (
   assert.equal(bot.chatLog.length, 1);
 });
 
+test('system broadcast posing as an online player is not treated as chat', () => {
+  const { client, conversations } = wiredBot();
+  serverPacket(client, { text: '<ProbeZZ> Fairy 公告' });
+  serverPacket(client, { translate: '<%s> %s', with: [
+    { text: 'ProbeZZ' }, { text: 'Fairy 公告' },
+  ] });
+  serverPacket(client, { translate: 'chat.type.text', with: [
+    { text: 'ProbeZZ' }, { text: 'Fairy 公告' },
+  ] });
+  assert.equal(conversations.length, 0);
+});
+
+test('standard player chat translation key is accepted', () => {
+  const { client, conversations } = wiredBot();
+  const original = ChatMessage.fromNotch(JSON.stringify({
+    translate: 'chat.type.text',
+    with: [{ text: 'ProbeZZ' }, { text: 'hello' }],
+  }));
+  client.emit('messagestr', original.toString(), 'chat', original);
+  assert.equal(conversations.length, 1);
+});
+
 test('only online players are accepted, case insensitive, on both channels', () => {
   const { client, conversations } = wiredBot();
-  client.emit('chat', 'pRoBeZz', 'hello');
-  client.emit('chat', 'Offline', 'hello');
+  for (const name of ['pRoBeZz', 'Offline']) {
+    const original = ChatMessage.fromNotch(JSON.stringify({
+      translate: '<%s> %s',
+      with: [{ text: name, insertion: name }, { text: 'hello' }],
+    }));
+    client.emit('messagestr', original.toString(), 'system', original);
+  }
   client.emit('whisper', 'pRoBeZz', 'secret-whisper');
   client.emit('whisper', 'Offline', 'secret-whisper');
   assert.deepEqual(conversations.map(item => [item.channel, item.username]), [

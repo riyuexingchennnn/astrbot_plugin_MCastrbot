@@ -26,3 +26,9 @@
 - “登录后游戏模式”下拉列表使用 Minecraft 英文模式名：`survival`、`creative`、`adventure`、`spectator`。切换需要服务器授予机器人 `/gamemode` 权限。
 - 在设置中开启“允许 LLM 控制机器人行为”和管理员工具开关，并填写管理员玩家名后，管理员可用自然语言调用 Agent 工具：看向玩家、扫描、附近移动、切换行为模式、跟随、自动战斗开关、收集方块、睡觉、吃面包、存入物品、领取补给和查询状态。
 - 行为模式 `idle` 停止自主跟随和战斗，等待自然语言指令；`auto` 跟随指定玩家、攻击 8 格内的敌对生物，并在饱食度低时吃面包；`follow` 仅跟随。跟随目标超出 16 格或实体不可见时，机器人最多每 15 秒请求一次 `/tp` 追上目标。`auto` 和 `follow` 会请求切换到 `survival`；相关行为需要服务器授予机器人 `/gamemode`、`/tp` 和方块、容器交互权限。
+
+## CI 与发布
+
+推送分支或提交 PR 时，GitHub Actions 会运行 Node 和 Python 测试。推送 `v1.2.3` 这类 tag 后，测试通过才会创建同名 Release，并附上可安装的 `source.zip`。压缩包内的 `metadata.yaml`、`package.json` 和 `package-lock.json` 版本会同步为 `1.2.3`；预发布 tag 如 `v1.2.3-rc.1` 会创建预发布版本。
+
+安装时请下载 Release 附件 **source.zip**，而不是 GitHub 自动生成的 “Source code” 压缩包；自动生成的源码压缩包保留 tag 提交时的版本字段。

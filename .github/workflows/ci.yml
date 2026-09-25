@@ -1,0 +1,52 @@
+name: CI and Release
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: node --test tests/*.test.js
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check pytest 'astrbot==4.28.1'
+      - run: python -m pytest -q tests/test_main.py tests/test_reply.py tests/test_release.py
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Build versioned source.zip
+        run: python scripts/build_release.py "$GITHUB_REF_NAME"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/source.zip --clobber
+          else
+            flags=()
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then flags+=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" dist/source.zip --verify-tag --title "$GITHUB_REF_NAME" --generate-notes "${flags[@]}"
+          fi
