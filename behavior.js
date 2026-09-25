@@ -9,6 +9,11 @@ const config = require('./config');
 const MODES = new Set(['idle', 'auto', 'follow']);
 const PLAYER_NAME = /^[A-Za-z0-9_]{1,16}$/;
 const SWORD_RANK = ['wooden', 'golden', 'stone', 'iron', 'diamond', 'netherite'];
+const MANUAL_ATTACK_MS = 30000;
+
+function isAttackable(entity) {
+  return entity && entity.position && ['hostile', 'mob', 'animal', 'player'].includes(entity.type);
+}
 
 class BehaviorController {
   constructor(owner) {
@@ -21,6 +26,9 @@ class BehaviorController {
     this.timer = null;
     this.followedEntity = null;
     this.attackedEntity = null;
+    this.manualAttackEntity = null;
+    this.manualAttackUntil = 0;
+    this.manualRestoreMode = null;
     this.spectatorWarned = false;
     this.lastTimeAge = null;
     this.tpsSamples = [];
@@ -83,6 +91,9 @@ class BehaviorController {
     try { bot?.pathfinder?.setGoal(null); } catch (_) { /* 同上 */ }
     this.followedEntity = null;
     this.attackedEntity = null;
+    this.manualAttackEntity = null;
+    this.manualAttackUntil = 0;
+    this.manualRestoreMode = null;
   }
 
   requestSurvival(bot) {
@@ -122,8 +133,73 @@ class BehaviorController {
   setAutoCombat(enabled) {
     const bot = this.online();
     this.autoCombat = enabled;
-    if (!enabled && this.attackedEntity) this.stopMovement(bot);
+    if (!enabled && this.attackedEntity && this.manualAttackEntity === null) this.stopMovement(bot);
     return this.status();
+  }
+
+  nearbyEntities(bot, radius = 16) {
+    if (!bot?.entity?.position) return [];
+    return Object.values(bot.entities || {})
+      .filter(entity => entity !== bot.entity && isAttackable(entity))
+      .map(entity => ({
+        id: entity.id,
+        name: entity.username || entity.displayName || entity.name || entity.type,
+        type: entity.type,
+        distance: bot.entity.position.distanceTo(entity.position),
+      }))
+      .filter(entity => Number.isInteger(entity.id) && Number.isFinite(entity.distance) && entity.distance <= radius)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 20)
+      .map(entity => ({ ...entity, distance: +entity.distance.toFixed(1) }));
+  }
+
+  async attackEntity(entityId) {
+    const bot = this.online();
+    if (this.task) throw new Error(`正在执行 ${this.task}，请稍后再试`);
+    const id = Number(entityId);
+    if (!Number.isSafeInteger(id)) throw new Error('实体 ID 无效');
+    const entity = bot.entities?.[id];
+    if (!isAttackable(entity) || entity === bot.entity) throw new Error('目标不是可攻击的实体');
+    const distance = bot.entity.position.distanceTo(entity.position);
+    if (!Number.isFinite(distance) || distance > 16) throw new Error('目标不在 16 格攻击范围内');
+    const serial = ++this.taskSerial;
+    const restoreMode = bot.game?.gameMode !== 'survival' && this.mode === 'idle'
+      ? (bot.game?.gameMode || config.restingMode) : null;
+    this.stopMovement(bot);
+    try {
+      if (bot.game?.gameMode !== 'survival') {
+        bot.chat('/gamemode survival');
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        if (serial !== this.taskSerial || bot !== this.owner.bot || this.owner.status !== 'online') {
+          throw new Error('指定攻击已取消或机器人已断线');
+        }
+        if (bot.game?.gameMode && bot.game.gameMode !== 'survival') {
+          throw new Error('指定攻击需要 survival 游戏模式和 /gamemode 权限');
+        }
+      }
+      if (bot.entities?.[id] !== entity || bot.entity.position.distanceTo(entity.position) > 16) {
+        throw new Error('目标已离开攻击范围');
+      }
+      const sword = bot.inventory?.items().filter(item => item.name.endsWith('_sword'))
+        .sort((a, b) => SWORD_RANK.indexOf(b.name.replace('_sword', '')) - SWORD_RANK.indexOf(a.name.replace('_sword', '')))[0];
+      if (sword) bot.equip(sword, 'hand').catch(error => this.owner.log('warn', `装备剑失败: ${error.message}`));
+      await bot.pvp.attack(entity);
+      if (serial !== this.taskSerial || bot !== this.owner.bot || this.owner.status !== 'online') {
+        this.stopMovement(bot);
+        throw new Error('指定攻击已取消或机器人已断线');
+      }
+      this.attackedEntity = id;
+      this.manualAttackEntity = id;
+      this.manualAttackUntil = Date.now() + MANUAL_ATTACK_MS;
+      this.manualRestoreMode = restoreMode;
+      return { ok: true, entityId: id, name: entity.username || entity.displayName || entity.name || entity.type, durationSeconds: 30 };
+    } catch (error) {
+      if (serial === this.taskSerial && bot === this.owner.bot && restoreMode &&
+          (!bot.game?.gameMode || bot.game.gameMode === 'survival')) {
+        bot.chat(`/gamemode ${restoreMode}`);
+      }
+      throw error;
+    }
   }
 
   status() {
@@ -133,6 +209,8 @@ class BehaviorController {
       mode: this.mode,
       target: this.target,
       autoCombat: this.autoCombat,
+      manualAttackEntity: this.manualAttackEntity,
+      nearbyEntities: this.nearbyEntities(bot),
       task: this.task,
       health: bot?.health ?? null,
       food: bot?.food ?? null,
@@ -149,7 +227,19 @@ class BehaviorController {
       if (this.tpsSamples.length > 20) this.tpsSamples.shift();
     }
     this.lastTimeAge = Number.isFinite(age) ? age : null;
-    if (bot !== this.owner.bot || this.owner.status !== 'online' || !this.authReady || this.mode === 'idle' || this.task) return;
+    if (bot !== this.owner.bot || this.owner.status !== 'online' || !this.authReady || this.task) return;
+    if (this.manualAttackEntity !== null) {
+      const entity = bot.entities?.[this.manualAttackEntity];
+      const attacking = !('target' in bot.pvp) || bot.pvp.target === entity;
+      if (entity && entity.isValid !== false && attacking &&
+          (!bot.game?.gameMode || bot.game.gameMode === 'survival') && Date.now() < this.manualAttackUntil) return;
+      const restoreMode = this.manualRestoreMode;
+      this.stopMovement(bot);
+      if (restoreMode && (!bot.game?.gameMode || bot.game.gameMode === 'survival')) {
+        bot.chat(`/gamemode ${restoreMode}`);
+      }
+    }
+    if (this.mode === 'idle') return;
     if (bot.game?.gameMode && bot.game.gameMode !== 'survival') {
       if (!this.spectatorWarned) {
         this.owner.log('warn', '自主行为需要 survival 游戏模式及 /gamemode 权限');

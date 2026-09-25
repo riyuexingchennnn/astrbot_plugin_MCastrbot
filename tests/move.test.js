@@ -16,6 +16,7 @@ function bridgeWithLimit(maxMoveDistance) {
         status: () => ({ mode: 'idle' }),
         setMode: (mode, username) => { actions.push(['mode', mode, username]); return { mode }; },
         setAutoCombat: enabled => { actions.push(['combat', enabled]); return { autoCombat: enabled }; },
+        attackEntity: id => { actions.push(['attack', id]); return { ok: true, entityId: id }; },
         collect: (block, count) => { actions.push(['collect', block, count]); return { ok: true }; },
         sleep: () => ({ ok: true }),
         eat: () => ({ ok: true }),
@@ -26,6 +27,7 @@ function bridgeWithLimit(maxMoveDistance) {
     on() {}
     start() {}
     goto(...coords) { moves.push(coords); return { ok: true }; }
+    runCommand(text) { actions.push(['command', text]); return { ok: true }; }
   }
   const fakeProcess = {
     stdin: { on() {} },
@@ -74,4 +76,12 @@ test('桥接行为工具路由到控制器并验证布尔参数', async () => {
   assert.deepEqual(bridge.replies.slice(0, 3).map(reply => reply.data),
     [{ mode: 'auto' }, { autoCombat: false }, { ok: true }]);
   assert.match(bridge.replies[3].error, /布尔值/);
+});
+
+test('桥接指定攻击实体并发送管理员命令', async () => {
+  const bridge = bridgeWithLimit(32);
+  await bridge.onLine(JSON.stringify({ id: 1, action: 'attack_entity', args: { entityId: 9 } }));
+  await bridge.onLine(JSON.stringify({ id: 2, action: 'command', args: { text: '/gamemode creative' } }));
+  assert.deepEqual(bridge.actions, [['attack', 9], ['command', '/gamemode creative']]);
+  assert.deepEqual(bridge.replies.map(reply => reply.data), [{ ok: true, entityId: 9 }, { ok: true }]);
 });

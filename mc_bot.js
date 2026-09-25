@@ -642,7 +642,11 @@ class FairyBot extends EventEmitter {
     if (!bot || this.status !== 'online') {
       return { ok: false, error: '机器人当前不在线' };
     }
-    const line = cmd.startsWith('/') ? cmd : '/' + cmd;
+    if (typeof cmd !== 'string' || !cmd.startsWith('/') || cmd.length < 2 ||
+        cmd.length > 240 || /[\r\n\u0000-\u001f]/.test(cmd)) {
+      throw new Error('命令须以 / 开头，且不得超过 240 字符或包含换行');
+    }
+    const line = cmd;
     const captured = [];
     const onMsg = (msg) => captured.push(msg);
     bot.on('messagestr', onMsg);

@@ -4,14 +4,16 @@ const { BehaviorController } = require('../behavior');
 
 function setup() {
   const calls = [];
-  const playerEntity = { id: 4, position: { x: 2, y: 64, z: 2 } };
+  const playerEntity = { id: 4, type: 'player', username: 'Alex', position: { x: 2, y: 64, z: 2 } };
   const hostile = { id: 8, type: 'hostile', position: { x: 3, y: 64, z: 3 } };
+  const neutral = { id: 9, type: 'mob', name: 'cow', position: { x: 4, y: 64, z: 4 } };
   let entities = [hostile];
   const bot = {
     username: 'Fairy',
     entity: { position: { distanceTo: () => 4 } },
     game: { gameMode: 'survival' },
     players: { Alex: { entity: playerEntity } },
+    entities: { 4: playerEntity, 8: hostile, 9: neutral, 10: { id: 10, type: 'other', position: { x: 5 } } },
     inventory: { items: () => [] },
     pathfinder: { setGoal: goal => calls.push(['goal', goal]) },
     pvp: { attack: entity => calls.push(['attack', entity.id]), stop: () => calls.push(['stop']) },
@@ -53,6 +55,52 @@ test('auto combat can be disabled without disabling following', () => {
   controller.tick(bot);
   assert.equal(calls.filter(([kind]) => kind === 'attack').length, 0);
   assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, 1);
+});
+
+test('LLM can select a nearby mob or player while auto combat still targets hostiles', async () => {
+  const { bot, controller, calls } = setup();
+  controller.setMode('auto', 'Alex');
+  assert.deepEqual(controller.status().nearbyEntities.map(entity => entity.id), [4, 8, 9]);
+  assert.deepEqual((await controller.attackEntity(9)).entityId, 9);
+  controller.tick(bot);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'attack'), [['attack', 9]]);
+  controller.manualAttackUntil = 0;
+  controller.tick(bot);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'attack'), [['attack', 9], ['attack', 8]]);
+  assert.deepEqual((await controller.attackEntity(4)).name, 'Alex');
+  await assert.rejects(controller.attackEntity(10), /可攻击/);
+  await assert.rejects(controller.attackEntity(999), /可攻击/);
+  bot.entity.position.distanceTo = () => 17;
+  await assert.rejects(controller.attackEntity(4), /16 格/);
+});
+
+test('idle manual attack changes to survival and restores resting mode when done', async () => {
+  const { bot, controller, calls } = setup();
+  bot.game.gameMode = 'spectator';
+  bot.chat = line => {
+    calls.push(['chat', line]);
+    bot.game.gameMode = line.split(' ')[1];
+  };
+  await controller.attackEntity(9);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'chat'), [['chat', '/gamemode survival']]);
+  controller.manualAttackUntil = 0;
+  controller.tick(bot);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'chat'),
+    [['chat', '/gamemode survival'], ['chat', '/gamemode spectator']]);
+});
+
+test('a later explicit game mode command is not overwritten when manual attack ends', async () => {
+  const { bot, controller, calls } = setup();
+  bot.game.gameMode = 'spectator';
+  bot.chat = line => {
+    calls.push(['chat', line]);
+    bot.game.gameMode = line.split(' ')[1];
+  };
+  await controller.attackEntity(9);
+  bot.game.gameMode = 'creative';
+  controller.tick(bot);
+  assert.equal(bot.game.gameMode, 'creative');
+  assert.deepEqual(calls.filter(([kind]) => kind === 'chat'), [['chat', '/gamemode survival']]);
 });
 
 test('follow catches up to a distant online player with a throttled teleport', () => {

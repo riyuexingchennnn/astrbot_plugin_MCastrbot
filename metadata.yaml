@@ -1,4 +1,4 @@
 name: astrbot_plugin_MCastrbot
 author: riyuexingchennnn
-description: Minecraft 聊天与 AstrBot 双向连接，提供状态面板和可控行为
+description: 将 Minecraft 机器人接入 AstrBot，支持游戏内对话、管理员工具、自主行为和状态面板
 version: 1.0.0

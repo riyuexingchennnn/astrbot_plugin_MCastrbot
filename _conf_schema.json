@@ -10,6 +10,7 @@
   "wake_keywords": {"type":"list","description":"唤醒词列表","hint":"留空不设关键词；默认不自动回复公屏","default":[]},
   "admin_ids": {"type":"list","description":"管理员玩家名列表","default":[]},
   "allow_admin_llm_actions": {"type":"bool","description":"允许管理员让机器人调用 Agent 工具","default":false},
+  "mc_global_prompt": {"type":"string","description":"MC Bot 全局提示词","hint":"仅用于 Minecraft 会话；留空则不追加提示词","default":"","editor_mode":true,"editor_language":"plaintext"},
   "segmented_reply": {"type":"bool","description":"启用 LLM 分段回复","default":true},
   "segmentation": {
     "type":"object",

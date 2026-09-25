@@ -158,3 +158,63 @@ def test_llm_tools_return_results_to_agent_instead_of_sending_them(monkeypatch, 
         assert json.loads(await plugin.mc_move_nearby(event, 1, 2, 3))["ok"]
 
     asyncio.run(run())
+
+
+def test_mc_global_prompt_only_applies_to_minecraft(monkeypatch, tmp_path):
+    MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
+    plugin = object.__new__(MCAstrBot)
+    plugin.config = {"mc_global_prompt": "  你是 MC 世界里的机器人。  "}
+    req = SimpleNamespace(system_prompt="原有提示词")
+    mc_event = SimpleNamespace(get_platform_name=lambda: "minecraft")
+    other_event = SimpleNamespace(get_platform_name=lambda: "other")
+
+    async def run():
+        await plugin.add_mc_global_prompt(other_event, req)
+        assert req.system_prompt == "原有提示词"
+        await plugin.add_mc_global_prompt(mc_event, req)
+        assert req.system_prompt == "原有提示词\n\n你是 MC 世界里的机器人。"
+
+    asyncio.run(run())
+
+
+def test_public_tool_sends_once_and_admin_command_uses_separate_rpc(monkeypatch, tmp_path):
+    MCAstrBot, MinecraftEvent, MessageChain, AstrBotMessage, MessageMember, MessageType = load_plugin(monkeypatch, tmp_path)
+    plugin = object.__new__(MCAstrBot)
+    plugin._can_use_llm_actions = lambda event: True
+    plugin.send_mc_text = AsyncMock()
+    plugin.rpc = AsyncMock(return_value={"ok": True, "reply": ["模式已更改"]})
+    message = AstrBotMessage()
+    message.message_str = "Fairy"
+    message.session_id = "mc-world"
+    message.sender = MessageMember("Alex", "Alex")
+    message.type = MessageType.GROUP_MESSAGE
+    event = MinecraftEvent(message, plugin, "public", "Alex")
+
+    async def run():
+        with patch("astrbot.core.platform.astr_message_event.Metric.upload", new_callable=AsyncMock):
+            assert await plugin.mc_send_public(event, "你好，大家") == "已发送到 Minecraft 公屏。"
+            await event.send(MessageChain().message("重复回复"))
+        command_result = await plugin.mc_send_public(event, "/gamemode creative")
+        assert json.loads(command_result)["reply"] == ["模式已更改"]
+        assert json.loads(await plugin.mc_attack_entity(event, 9))["ok"]
+
+    asyncio.run(run())
+    plugin.send_mc_text.assert_awaited_once_with("你好，大家")
+    assert plugin.rpc.await_args_list[0].args == ("command", {"text": "/gamemode creative"})
+    assert plugin.rpc.await_args_list[1].args == ("attack_entity", {"entityId": 9})
+
+
+def test_public_and_attack_tools_reject_non_admin(monkeypatch, tmp_path):
+    MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
+    plugin = object.__new__(MCAstrBot)
+    plugin._can_use_llm_actions = lambda event: False
+    plugin.send_mc_text = AsyncMock()
+    plugin.rpc = AsyncMock()
+
+    async def run():
+        assert "无权" in await plugin.mc_send_public(SimpleNamespace(), "/gamemode creative")
+        assert "无权" in await plugin.mc_attack_entity(SimpleNamespace(), 9)
+
+    asyncio.run(run())
+    plugin.send_mc_text.assert_not_awaited()
+    plugin.rpc.assert_not_awaited()

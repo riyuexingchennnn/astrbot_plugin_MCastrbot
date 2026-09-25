@@ -12,9 +12,11 @@ bot.on('chat', (item) => output({ type: 'chat', data: item }));
 const allowed = {
   snapshot: () => bot.snapshot(),
   say: ({ text, target }) => { bot.sendChat(text, target || null); return { ok: true }; },
+  command: ({ text }) => bot.runCommand(text),
   look_at_player: ({ username }) => bot.lookAtPlayer(username),
   scan: ({ radius }) => bot.scan(Math.max(1, Math.min(24, Number(radius) || 12))),
   behavior_status: () => bot.behavior.status(),
+  attack_entity: ({ entityId }) => bot.behavior.attackEntity(entityId),
   set_mode: ({ mode, username }) => bot.behavior.setMode(mode, username),
   set_auto_combat: ({ enabled }) => {
     if (typeof enabled !== 'boolean') throw new Error('enabled 必须是布尔值');

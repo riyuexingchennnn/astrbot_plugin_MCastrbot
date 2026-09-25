@@ -44,6 +44,8 @@ class SplitReplyTest(unittest.TestCase):
         schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text(encoding="utf-8"))
         self.assertEqual(schema["wake_keywords"]["default"], [])
         self.assertFalse(schema["public_auto_reply"]["default"])
+        self.assertEqual(schema["mc_global_prompt"]["default"], "")
+        self.assertTrue(schema["mc_global_prompt"]["editor_mode"])
         group = schema["segmentation"]
         self.assertEqual(group["type"], "object")
         self.assertEqual(group["condition"], {"segmented_reply": True})

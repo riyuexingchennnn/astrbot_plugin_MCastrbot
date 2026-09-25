@@ -118,3 +118,26 @@ test('public and tell replies keep their channel', () => {
   assert.throws(() => bot.sendChat('/op ProbeZZ'), /不允许发送命令/);
   assert.throws(() => bot.sendChat('x'.repeat(241)), /240/);
 });
+
+test('direct command execution rejects line breaks and overlong commands', async () => {
+  const bot = new FairyBot();
+  bot.status = 'online';
+  bot.bot = { chat: () => { throw new Error('invalid command reached Minecraft'); } };
+  await assert.rejects(bot.runCommand('/gamemode creative\n/op Alex'), /换行/);
+  await assert.rejects(bot.runCommand('/' + 'a'.repeat(240)), /240/);
+});
+
+test('direct command execution sends a slash command and returns server feedback', async () => {
+  const bot = new FairyBot();
+  const client = new EventEmitter();
+  const sent = [];
+  client.chat = line => {
+    sent.push(line);
+    client.emit('messagestr', '模式已更改');
+  };
+  bot.status = 'online';
+  bot.bot = client;
+  const result = await bot.runCommand('/gamemode creative');
+  assert.deepEqual(sent, ['/gamemode creative']);
+  assert.deepEqual(result.reply, ['模式已更改']);
+});

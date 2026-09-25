@@ -16,6 +16,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import At, Plain
 from astrbot.api.platform import AstrBotMessage, Group, MessageMember, MessageType, PlatformMetadata
+from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
 from astrbot.api.web import error_response, json_response, request
 from .reply import filter_reply, split_reply
@@ -36,6 +37,8 @@ class MinecraftEvent(AstrMessageEvent):
         self.mc_sender = sender
 
     async def send(self, message: MessageChain) -> None:
+        if self.mc_channel == "public" and getattr(self, "mc_public_tool_sent", False):
+            return
         text = message.get_plain_text().strip()
         if not text:
             logger.warning("MC AstrBot: 跳过空回复（消息链无纯文本，玩家=%s）", self.mc_sender)
@@ -337,6 +340,14 @@ class MCAstrBot(Star):
         event = MinecraftEvent(msg, self, channel, sender)
         self.context.get_event_queue().put_nowait(event)
 
+    @filter.on_llm_request()
+    async def add_mc_global_prompt(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
+        if event.get_platform_name() != "minecraft":
+            return
+        prompt = str(self.config.get("mc_global_prompt", "")).strip()
+        if prompt:
+            req.system_prompt = f"{req.system_prompt or ''}\n\n{prompt}".strip()
+
     def is_admin(self, username: str) -> bool:
         name = username.strip().casefold()
         return bool(name) and any(
@@ -510,8 +521,42 @@ class MCAstrBot(Star):
 
     @filter.llm_tool(name="mc_behavior_status")
     async def mc_behavior_status(self, event: AstrMessageEvent):
-        """查询 Minecraft 机器人的行为模式、目标玩家、任务、血量、饱食度和 TPS。"""
+        """查询 Minecraft 机器人的状态和附近可攻击实体的 ID，供指定目标攻击使用。"""
         return await self._behavior_tool(event, "behavior_status")
+
+    @filter.llm_tool(name="mc_attack_entity")
+    async def mc_attack_entity(self, event: AstrMessageEvent, entity_id: int):
+        """攻击附近指定 ID 的实体，包括生物或玩家。先用 mc_behavior_status 查看附近实体 ID；攻击持续最多 30 秒，不改变自动战斗目标规则。
+
+        Args:
+            entity_id(number): 附近实体的 ID
+        """
+        return await self._behavior_tool(event, "attack_entity", {"entityId": entity_id})
+
+    @filter.llm_tool(name="mc_send_public")
+    async def mc_send_public(self, event: AstrMessageEvent, text: str):
+        """让 Minecraft 机器人在公屏发言，或执行以 / 开头的任意服务器命令，例如 /gamemode creative。仅管理员可调用。发言后不要重复回复同一内容。
+
+        Args:
+            text(string): 公屏消息，或以 / 开头的 Minecraft 命令
+        """
+        if not self._can_use_llm_actions(event):
+            return "当前会话无权控制 Minecraft 机器人。"
+        if not isinstance(text, str) or not text.strip():
+            return "消息不能为空。"
+        text = text.strip()
+        try:
+            if text.startswith("/"):
+                result = await self.rpc("command", {"text": text}, timeout=8)
+                return json.dumps(result, ensure_ascii=False)
+            if len(text) > 2000:
+                return "公屏消息不能超过 2000 字符。"
+            await self.send_mc_text(text)
+            if getattr(event, "mc_channel", None) == "public":
+                event.mc_public_tool_sent = True
+            return "已发送到 Minecraft 公屏。"
+        except Exception as exc:
+            return f"公屏发送或命令执行失败：{exc}"
 
     @filter.llm_tool(name="mc_set_mode")
     async def mc_set_mode(self, event: AstrMessageEvent, mode: str, username: str = ""):
