@@ -47,6 +47,7 @@ class SplitReplyTest(unittest.TestCase):
         self.assertEqual(schema["mc_global_prompt"]["default"], "")
         self.assertEqual(schema["public_auto_reply"]["description"], "允许回复 MC 公屏消息")
         self.assertEqual(schema["mc_global_prompt"]["type"], "text")
+        self.assertNotIn("resting_mode", schema)
         group = schema["segmentation"]
         self.assertEqual(group["type"], "object")
         self.assertEqual(group["condition"], {"segmented_reply": True})

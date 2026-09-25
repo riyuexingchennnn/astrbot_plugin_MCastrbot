@@ -38,6 +38,7 @@ test('auto attacks hostiles, resumes following, and idle stops autonomous action
   controller.tick(bot);
   assert.equal(controller.status().mode, 'idle');
   assert.equal(calls.filter(([kind, goal]) => kind === 'goal' && goal).length, 1);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'chat'), []);
 });
 
 test('follow mode excludes combat and requires a valid target', () => {
@@ -75,7 +76,7 @@ test('LLM can select a nearby mob or player while auto combat still targets host
   await assert.rejects(controller.attackEntity(4), /16 格/);
 });
 
-test('idle manual attack changes to survival and restores resting mode when done', async () => {
+test('idle manual attack changes to survival and stays there when done', async () => {
   const { bot, controller, calls } = setup();
   bot.game.gameMode = 'spectator';
   bot.chat = line => {
@@ -86,8 +87,8 @@ test('idle manual attack changes to survival and restores resting mode when done
   assert.deepEqual(calls.filter(([kind]) => kind === 'chat'), [['chat', '/gamemode survival']]);
   controller.manualAttackUntil = 0;
   controller.tick(bot);
-  assert.deepEqual(calls.filter(([kind]) => kind === 'chat'),
-    [['chat', '/gamemode survival'], ['chat', '/gamemode spectator']]);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'chat'), [['chat', '/gamemode survival']]);
+  assert.equal(bot.game.gameMode, 'survival');
 });
 
 test('a later explicit game mode command is not overwritten when manual attack ends', async () => {
@@ -191,7 +192,7 @@ test('equip tool selects inventory item and validates destination', async () => 
   await assert.rejects(controller.equipItem('iron_sword', 'invalid'), /装备位置无效/);
 });
 
-test('idle one-shot task temporarily enters survival and restores resting mode', async () => {
+test('idle one-shot task enters survival without switching back', async () => {
   const { bot, controller, calls } = setup();
   bot.game.gameMode = 'spectator';
   bot.chat = line => {
@@ -200,8 +201,8 @@ test('idle one-shot task temporarily enters survival and restores resting mode',
   };
   const result = await controller.runTask('probe', async () => ({ ok: true }));
   assert.deepEqual(result, { ok: true });
-  assert.deepEqual(calls.filter(([kind]) => kind === 'chat'),
-    [['chat', '/gamemode survival'], ['chat', '/gamemode spectator']]);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'chat'), [['chat', '/gamemode survival']]);
+  assert.equal(bot.game.gameMode, 'survival');
 });
 
 test('query tools expose nearby entities, blocks, recipes and current modes', () => {

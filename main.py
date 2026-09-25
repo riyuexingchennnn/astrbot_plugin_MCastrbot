@@ -223,7 +223,6 @@ class MCAstrBot(Star):
             "version": self.config.get("mc_version") or False,
             "auth": self.config.get("mc_auth", "offline"),
             "login_password": self.config.get("login_password", ""),
-            "resting_mode": self.config.get("resting_mode", "spectator"),
         }, ensure_ascii=False)
         try:
             self.proc = await asyncio.create_subprocess_exec(

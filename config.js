@@ -12,7 +12,6 @@ module.exports = {
     delayMs: number('login_delay_ms', 1800), retries: number('login_retries', 3),
     retryDelayMs: 2500,
   },
-  restingMode: source.resting_mode ?? 'spectator',
   maxMoveDistance: 32,
   reconnect: { baseDelayMs: 5000, maxDelayMs: 60000, factor: 1.7 },
   keepAlive: { enabled: true, intervalMs: 45000 },

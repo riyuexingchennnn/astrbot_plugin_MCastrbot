@@ -118,8 +118,7 @@ class FairyBot extends EventEmitter {
         this.log('error', `自主行为初始化失败: ${error.message}`);
       }
       if (!config.login.enabled) {
-        if (this.behavior.mode === 'idle') this.applyRestingMode();
-        else this.behavior.requestSurvival(bot);
+        if (this.behavior.mode !== 'idle') this.behavior.requestSurvival(bot);
       }
     });
 
@@ -245,8 +244,7 @@ class FairyBot extends EventEmitter {
         this.behavior.authReady = true;
         this.log('sys', '登录模组：已通过');
         // 登录通过之后再切模式，否则服务器会拒绝指令
-        if (this.behavior.mode === 'idle') this.applyRestingMode();
-        else this.behavior.requestSurvival(bot);
+        if (this.behavior.mode !== 'idle') this.behavior.requestSurvival(bot);
         this.teardownLogin();
       } else if (/未注册|请先注册|not registered/i.test(text)) {
         this.log('sys', '登录模组：未注册，改发注册指令');
@@ -286,21 +284,6 @@ class FairyBot extends EventEmitter {
       safe(() => this.bot.removeListener('messagestr', this.loginMsgHandler));
     }
     this.loginMsgHandler = null;
-  }
-
-  // 切到常驻模式。观察者模式下机器人不占睡觉人数，也不参与实体碰撞，
-  // 挂机时对服务器的干扰最小。登录成功之后调用。
-  applyRestingMode() {
-    if (this.behavior.mode !== 'idle') return;
-    const mode = config.restingMode;
-    if (!mode) return;
-    const currentBot = this.bot;
-    setTimeout(() => {
-      const bot = this.bot;
-      if (!bot || bot !== currentBot || !bot.entity || this.behavior.mode !== 'idle') return;
-      safe(() => bot.chat(`/gamemode ${mode}`));
-      this.log('sys', `已请求切换到 ${mode} 模式`);
-    }, 1500);
   }
 
   pushChat(kind, text) {

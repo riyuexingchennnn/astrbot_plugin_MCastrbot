@@ -50,7 +50,6 @@ class BehaviorController {
     this.attackedEntity = null;
     this.manualAttackEntity = null;
     this.manualAttackUntil = 0;
-    this.manualRestoreMode = null;
     this.spectatorWarned = false;
     this.lastTimeAge = null;
     this.tpsSamples = [];
@@ -115,7 +114,6 @@ class BehaviorController {
     this.attackedEntity = null;
     this.manualAttackEntity = null;
     this.manualAttackUntil = 0;
-    this.manualRestoreMode = null;
   }
 
   requestSurvival(bot) {
@@ -143,9 +141,7 @@ class BehaviorController {
     this.mode = mode;
     this.target = mode === 'idle' ? null : username;
     this.lastCatchupAt = 0;
-    if (mode === 'idle') {
-      if (config.restingMode) bot.chat(`/gamemode ${config.restingMode}`);
-    } else {
+    if (mode !== 'idle') {
       this.requestSurvival(bot);
     }
     this.owner.log('sys', `行为模式: ${mode}${this.target ? `，目标 ${this.target}` : ''}`);
@@ -194,43 +190,32 @@ class BehaviorController {
     const distance = bot.entity.position.distanceTo(entity.position);
     if (!Number.isFinite(distance) || distance > 16) throw new Error('目标不在 16 格攻击范围内');
     const serial = ++this.taskSerial;
-    const restoreMode = bot.game?.gameMode !== 'survival' && this.mode === 'idle'
-      ? (bot.game?.gameMode || config.restingMode) : null;
     this.stopMovement(bot);
-    try {
-      if (bot.game?.gameMode !== 'survival') {
-        bot.chat('/gamemode survival');
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        if (serial !== this.taskSerial || bot !== this.owner.bot || this.owner.status !== 'online') {
-          throw new Error('指定攻击已取消或机器人已断线');
-        }
-        if (bot.game?.gameMode && bot.game.gameMode !== 'survival') {
-          throw new Error('指定攻击需要 survival 游戏模式和 /gamemode 权限');
-        }
-      }
-      if (bot.entities?.[id] !== entity || bot.entity.position.distanceTo(entity.position) > 16) {
-        throw new Error('目标已离开攻击范围');
-      }
-      const sword = bot.inventory?.items().filter(item => item.name.endsWith('_sword'))
-        .sort((a, b) => SWORD_RANK.indexOf(b.name.replace('_sword', '')) - SWORD_RANK.indexOf(a.name.replace('_sword', '')))[0];
-      if (sword) bot.equip(sword, 'hand').catch(error => this.owner.log('warn', `装备剑失败: ${error.message}`));
-      await bot.pvp.attack(entity);
+    if (bot.game?.gameMode !== 'survival') {
+      bot.chat('/gamemode survival');
+      await new Promise(resolve => setTimeout(resolve, 1500));
       if (serial !== this.taskSerial || bot !== this.owner.bot || this.owner.status !== 'online') {
-        this.stopMovement(bot);
         throw new Error('指定攻击已取消或机器人已断线');
       }
-      this.attackedEntity = id;
-      this.manualAttackEntity = id;
-      this.manualAttackUntil = Date.now() + MANUAL_ATTACK_MS;
-      this.manualRestoreMode = restoreMode;
-      return { ok: true, entityId: id, name: entity.username || entity.displayName || entity.name || entity.type, durationSeconds: 30 };
-    } catch (error) {
-      if (serial === this.taskSerial && bot === this.owner.bot && restoreMode &&
-          (!bot.game?.gameMode || bot.game.gameMode === 'survival')) {
-        bot.chat(`/gamemode ${restoreMode}`);
+      if (bot.game?.gameMode && bot.game.gameMode !== 'survival') {
+        throw new Error('指定攻击需要 survival 游戏模式和 /gamemode 权限');
       }
-      throw error;
     }
+    if (bot.entities?.[id] !== entity || bot.entity.position.distanceTo(entity.position) > 16) {
+      throw new Error('目标已离开攻击范围');
+    }
+    const sword = bot.inventory?.items().filter(item => item.name.endsWith('_sword'))
+      .sort((a, b) => SWORD_RANK.indexOf(b.name.replace('_sword', '')) - SWORD_RANK.indexOf(a.name.replace('_sword', '')))[0];
+    if (sword) bot.equip(sword, 'hand').catch(error => this.owner.log('warn', `装备剑失败: ${error.message}`));
+    await bot.pvp.attack(entity);
+    if (serial !== this.taskSerial || bot !== this.owner.bot || this.owner.status !== 'online') {
+      this.stopMovement(bot);
+      throw new Error('指定攻击已取消或机器人已断线');
+    }
+    this.attackedEntity = id;
+    this.manualAttackEntity = id;
+    this.manualAttackUntil = Date.now() + MANUAL_ATTACK_MS;
+    return { ok: true, entityId: id, name: entity.username || entity.displayName || entity.name || entity.type, durationSeconds: 30 };
   }
 
   async attackPlayer(username) {
@@ -272,11 +257,7 @@ class BehaviorController {
       const attacking = !('target' in bot.pvp) || bot.pvp.target === entity;
       if (entity && entity.isValid !== false && attacking &&
           (!bot.game?.gameMode || bot.game.gameMode === 'survival') && Date.now() < this.manualAttackUntil) return;
-      const restoreMode = this.manualRestoreMode;
       this.stopMovement(bot);
-      if (restoreMode && (!bot.game?.gameMode || bot.game.gameMode === 'survival')) {
-        bot.chat(`/gamemode ${restoreMode}`);
-      }
     }
     if (this.mode === 'idle') return;
     if (bot.game?.gameMode && bot.game.gameMode !== 'survival') {
@@ -358,9 +339,6 @@ class BehaviorController {
       if (serial === this.taskSerial) {
         this.task = null;
         this.stopMovement(bot);
-        if (this.mode === 'idle' && config.restingMode && bot.game?.gameMode !== config.restingMode) {
-          bot.chat(`/gamemode ${config.restingMode}`);
-        }
       }
     }
   }
