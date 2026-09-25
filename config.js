@@ -17,7 +17,4 @@ module.exports = {
   reconnect: { baseDelayMs: 5000, maxDelayMs: 60000, factor: 1.7 },
   keepAlive: { enabled: true, intervalMs: 45000 },
   chatHistoryLimit: 100,
-  conversation: {
-    tellRegex: source.tell_message_regex || '',
-  },
 };

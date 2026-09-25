@@ -8,7 +8,6 @@
   "resting_mode": {"type":"string","description":"登录后游戏模式","hint":"留空不切换；spectator 需服务器权限","default":"spectator"},
   "public_auto_reply": {"type":"bool","description":"回复 MC 公屏消息","hint":"关闭后公屏只记入面板","default":true},
   "wake_keywords": {"type":"list","description":"唤醒词列表","hint":"正文忽略大小写匹配；空列表回复所有消息","default":["Fairy"]},
-  "tell_message_regex": {"type":"string","description":"自定义 tell 消息正则","hint":"按 username、message 顺序捕获","default":""},
   "admin_ids": {"type":"list","description":"管理员玩家名列表","default":[]},
   "segmented_reply": {"type":"bool","description":"启用 LLM 分段回复","default":true},
   "split_threshold": {"type":"int","description":"分段 · 不分段字数阈值","hint":"短于此值只发一条，仍受 240 字限制","default":150,"condition":{"segmented_reply":true}},

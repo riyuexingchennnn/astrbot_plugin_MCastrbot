@@ -158,7 +158,6 @@ class MCAstrBot(Star):
             "login_password": self.config.get("login_password", ""),
             "resting_mode": self.config.get("resting_mode", "spectator"),
             "llm_max_move_distance": self.config.get("llm_max_move_distance", 32),
-            "tell_message_regex": self.config.get("tell_message_regex", ""),
         }, ensure_ascii=False)
         try:
             self.proc = await asyncio.create_subprocess_exec(

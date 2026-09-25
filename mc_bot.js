@@ -75,13 +75,6 @@ class FairyBot extends EventEmitter {
   }
 
   wire(bot) {
-    if (config.conversation.tellRegex && bot.addChatPattern) {
-      try {
-        bot.addChatPattern('whisper', new RegExp(config.conversation.tellRegex), { deprecated: true });
-      } catch (error) {
-        this.log('warn', `tell 自定义消息正则无效: ${error.message}`);
-      }
-    }
     bot.on('login', () => {
       this.log('sys', '握手完成，已通过登录校验');
     });
@@ -129,7 +122,10 @@ class FairyBot extends EventEmitter {
       const text = safe(() => jsonMsg.toString(), '');
       if (!text || !text.trim()) return;
       this.pushChat('server', text.trim());
-      this.parseConversation(jsonMsg);
+    });
+
+    bot.on('chat', (username, message) => {
+      this.receiveConversation('public', username, message);
     });
 
     bot.on('whisper', (username, message) => {
@@ -208,8 +204,7 @@ class FairyBot extends EventEmitter {
     let done = false;
     let tries = 0;
 
-    const onMsg = (jsonMsg) => {
-      const text = safe(() => jsonMsg.toString(), '');
+    const onMsg = (text) => {
       if (!text) return;
       if (/注册成功|登录成功|已经登录/.test(text)) {
         done = true;
@@ -242,7 +237,7 @@ class FairyBot extends EventEmitter {
     };
 
     this.loginMsgHandler = onMsg;
-    bot.on('message', onMsg);
+    bot.on('messagestr', onMsg);
     this.loginTimer = setTimeout(tick, config.login.delayMs);
   }
 
@@ -252,7 +247,7 @@ class FairyBot extends EventEmitter {
       this.loginTimer = null;
     }
     if (this.loginMsgHandler && this.bot) {
-      safe(() => this.bot.removeListener('message', this.loginMsgHandler));
+      safe(() => this.bot.removeListener('messagestr', this.loginMsgHandler));
     }
     this.loginMsgHandler = null;
   }
@@ -279,21 +274,10 @@ class FairyBot extends EventEmitter {
     this.emit('chat', item);
   }
 
-  parseConversation(jsonMsg) {
-    const raw = jsonMsg?.json;
-    if (raw?.translate !== 'chat.type.text' || !Array.isArray(raw.with) || raw.with.length !== 2) return;
-    const [sender, message] = raw.with;
-    const username = typeof sender === 'string' ? sender : sender?.text;
-    const body = typeof message === 'string' ? message : message?.text;
-    if (typeof username === 'string' && typeof body === 'string') {
-      this.receiveConversation('public', username, body);
-    }
-  }
-
   receiveConversation(channel, username, message) {
     if (!['public', 'tell'].includes(channel) || !username || username.toLowerCase() === config.bot.username.toLowerCase() || !message?.trim()) return;
-    // 公聊必须来自当前在线玩家，避免 <Server> 一类系统广播进入对话流水线。
-    if (channel === 'public' && !Object.keys(this.bot?.players || {}).some(
+    // 仅接受当前在线玩家，避免 <Server> 一类系统广播进入对话流水线。
+    if (!Object.keys(this.bot?.players || {}).some(
       name => name.toLowerCase() === username.toLowerCase()
     )) return;
     const body = message.trim().slice(0, 500);
@@ -621,19 +605,17 @@ class FairyBot extends EventEmitter {
     }
     const line = cmd.startsWith('/') ? cmd : '/' + cmd;
     const captured = [];
-    const onMsg = (msg) => {
-      try { captured.push(msg.toString()); } catch (e) { /* 忽略 */ }
-    };
-    bot.on('message', onMsg);
+    const onMsg = (msg) => captured.push(msg);
+    bot.on('messagestr', onMsg);
     try {
       bot.chat(line);
       // 服务器回包有明显延迟，700ms 太短会把上一条的回复算到本条头上
       await new Promise(r => setTimeout(r, 1300));
     } catch (e) {
-      bot.removeListener('message', onMsg);
+      bot.removeListener('messagestr', onMsg);
       return { ok: false, error: e.message, command: line };
     }
-    bot.removeListener('message', onMsg);
+    bot.removeListener('messagestr', onMsg);
     return { ok: true, command: line, reply: captured.slice(-6) };
   }
 
