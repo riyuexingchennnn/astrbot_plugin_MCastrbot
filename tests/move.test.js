@@ -19,10 +19,19 @@ function bridgeWithLimit(maxMoveDistance) {
         attackEntity: id => { actions.push(['attack', id]); return { ok: true, entityId: id }; },
         collect: (block, count) => { actions.push(['collect', block, count]); return { ok: true }; },
         sleep: () => ({ ok: true }),
-        eat: () => ({ ok: true }),
+        inventory: () => { actions.push(['inventory']); return { ok: true, items: [] }; },
+        eat: item => { actions.push(['eat', item]); return { ok: true }; },
+        equipItem: (item, destination) => { actions.push(['equip', item, destination]); return { ok: true }; },
+        viewChest: () => { actions.push(['view_chest']); return { ok: true, items: [] }; },
+        takeFromChest: (item, count) => { actions.push(['take_from_chest', item, count]); return { ok: true }; },
         store: () => ({ ok: true }),
         fetch: () => ({ ok: true }),
       };
+      for (const method of ['modes', 'entities', 'nearbyBlocks', 'craftable', 'attackPlayer',
+        'craftRecipe', 'smeltItem', 'clearFurnace', 'placeHere', 'useOnEntity', 'useOnBlock',
+        'givePlayer', 'discard', 'putInChest']) {
+        this.behavior[method] = (...args) => { actions.push([method, ...args]); return { ok: true }; };
+      }
     }
     on() {}
     start() {}
@@ -84,4 +93,48 @@ test('桥接指定攻击实体并发送管理员命令', async () => {
   await bridge.onLine(JSON.stringify({ id: 2, action: 'command', args: { text: '/gamemode creative' } }));
   assert.deepEqual(bridge.actions, [['attack', 9], ['command', '/gamemode creative']]);
   assert.deepEqual(bridge.replies.map(reply => reply.data), [{ ok: true, entityId: 9 }, { ok: true }]);
+});
+
+test('桥接进食、背包、装备与容器工具', async () => {
+  const bridge = bridgeWithLimit(32);
+  for (const [id, action, args] of [
+    [1, 'inventory', {}],
+    [2, 'eat', { item: 'cooked_beef' }],
+    [3, 'equip_item', { item: 'iron_sword', destination: 'hand' }],
+    [4, 'view_chest', {}],
+    [5, 'take_from_chest', { item: 'bread', count: 3 }],
+  ]) {
+    await bridge.onLine(JSON.stringify({ id, action, args }));
+  }
+  assert.deepEqual(bridge.actions, [
+    ['inventory'], ['eat', 'cooked_beef'], ['equip', 'iron_sword', 'hand'],
+    ['view_chest'], ['take_from_chest', 'bread', 3],
+  ]);
+  assert.ok(bridge.replies.every(reply => reply.data.ok));
+});
+
+test('bridge routes added agent tools with their arguments', async () => {
+  const bridge = bridgeWithLimit(32);
+  const cases = [
+    ['modes', {}, ['modes']],
+    ['entities', { radius: 8 }, ['entities', 8]],
+    ['nearby_blocks', { block: 'stone', radius: 6 }, ['nearbyBlocks', 'stone', 6]],
+    ['craftable', { item: 'stick', count: 2 }, ['craftable', 'stick', 2]],
+    ['attack_player', { username: 'Alex' }, ['attackPlayer', 'Alex']],
+    ['craft_recipe', { item: 'stick', count: 2 }, ['craftRecipe', 'stick', 2]],
+    ['smelt_item', { item: 'iron_ore', count: 2, fuel: 'coal', fuelCount: 1 },
+      ['smeltItem', 'iron_ore', 2, 'coal', 1]],
+    ['clear_furnace', {}, ['clearFurnace']],
+    ['place_here', { item: 'stone', x: 1, y: 2, z: 3 }, ['placeHere', 'stone', 1, 2, 3]],
+    ['use_on_entity', { entityId: 9, item: 'bone' }, ['useOnEntity', 9, 'bone']],
+    ['use_on_block', { x: 1, y: 2, z: 3, item: 'bucket' }, ['useOnBlock', 1, 2, 3, 'bucket']],
+    ['give_player', { username: 'Alex', item: 'bread', count: 2 }, ['givePlayer', 'Alex', 'bread', 2]],
+    ['discard', { item: 'dirt', count: 3 }, ['discard', 'dirt', 3]],
+    ['put_in_chest', { item: 'dirt', count: 3 }, ['putInChest', 'dirt', 3]],
+  ];
+  for (const [id, [action, args]] of cases.entries()) {
+    await bridge.onLine(JSON.stringify({ id, action, args }));
+  }
+  assert.deepEqual(bridge.actions, cases.map(([, , expected]) => expected));
+  assert.ok(bridge.replies.every(reply => reply.data.ok));
 });

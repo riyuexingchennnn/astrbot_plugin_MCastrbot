@@ -218,3 +218,67 @@ def test_public_and_attack_tools_reject_non_admin(monkeypatch, tmp_path):
     asyncio.run(run())
     plugin.send_mc_text.assert_not_awaited()
     plugin.rpc.assert_not_awaited()
+
+
+def test_inventory_food_equipment_and_chest_tools_use_admin_rpc(monkeypatch, tmp_path):
+    MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
+    plugin = object.__new__(MCAstrBot)
+    plugin._can_use_llm_actions = lambda event: True
+    plugin.rpc = AsyncMock(return_value={"ok": True})
+    event = SimpleNamespace()
+
+    async def run():
+        await plugin.mc_inventory(event)
+        await plugin.mc_eat(event, "potion")
+        await plugin.mc_equip_item(event, "iron_sword", "hand")
+        await plugin.mc_view_chest(event)
+        await plugin.mc_take_from_chest(event, "bread", 3)
+
+    asyncio.run(run())
+    assert [call.args[:2] for call in plugin.rpc.await_args_list] == [
+        ("inventory", {}),
+        ("eat", {"item": "potion"}),
+        ("equip_item", {"item": "iron_sword", "destination": "hand"}),
+        ("view_chest", {}),
+        ("take_from_chest", {"item": "bread", "count": 3}),
+    ]
+
+
+def test_added_agent_tools_route_rpc_and_require_admin(monkeypatch, tmp_path):
+    MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
+    plugin = object.__new__(MCAstrBot)
+    plugin._can_use_llm_actions = lambda event: True
+    plugin.rpc = AsyncMock(return_value={"ok": True})
+    event = SimpleNamespace()
+
+    async def run():
+        await plugin.mc_stats(event)
+        await plugin.mc_modes(event)
+        await plugin.mc_entities(event, 8)
+        await plugin.mc_nearby_blocks(event, "stone", 6)
+        await plugin.mc_craftable(event, "stick", 2)
+        await plugin.mc_attack_player(event, "Alex")
+        await plugin.mc_craft_recipe(event, "stick", 2)
+        await plugin.mc_smelt_item(event, "iron_ore", 2, "coal", 1)
+        await plugin.mc_clear_furnace(event)
+        await plugin.mc_place_here(event, "stone", 1, 2, 3)
+        await plugin.mc_use_on_entity(event, 9, "bone")
+        await plugin.mc_use_on_block(event, 1, 2, 3, "bucket")
+        await plugin.mc_go_to_bed(event)
+        await plugin.mc_put_in_chest(event, "dirt", 3)
+        await plugin.mc_discard(event, "dirt", 3)
+        await plugin.mc_give_player(event, "Alex", "bread", 2)
+
+    asyncio.run(run())
+    assert [call.args[0] for call in plugin.rpc.await_args_list] == [
+        "behavior_status", "modes", "entities", "nearby_blocks", "craftable",
+        "attack_player", "craft_recipe", "smelt_item", "clear_furnace", "place_here",
+        "use_on_entity", "use_on_block", "sleep", "put_in_chest", "discard", "give_player",
+    ]
+    assert plugin.rpc.await_args_list[7].kwargs["timeout"] == 120
+    plugin._can_use_llm_actions = lambda event: False
+    async def denied():
+        assert "无权" in await plugin.mc_place_here(event, "stone", 1, 2, 3)
+        assert "无权" in await plugin.mc_attack_player(event, "Alex")
+    asyncio.run(denied())
+    assert plugin.rpc.await_count == 16

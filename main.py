@@ -524,6 +524,45 @@ class MCAstrBot(Star):
         """查询 Minecraft 机器人的状态和附近可攻击实体的 ID，供指定目标攻击使用。"""
         return await self._behavior_tool(event, "behavior_status")
 
+    @filter.llm_tool(name="mc_stats")
+    async def mc_stats(self, event: AstrMessageEvent):
+        """查看机器人血量、饱食度、TPS、行为模式和正在执行的任务。"""
+        return await self._behavior_tool(event, "behavior_status")
+
+    @filter.llm_tool(name="mc_modes")
+    async def mc_modes(self, event: AstrMessageEvent):
+        """查看当前游戏模式、行为模式、跟随目标和可切换的行为模式。"""
+        return await self._behavior_tool(event, "modes")
+
+    @filter.llm_tool(name="mc_entities")
+    async def mc_entities(self, event: AstrMessageEvent, radius: int = 16):
+        """列出附近实体的 ID、名称、类型和距离，包括玩家与非战斗实体。
+
+        Args:
+            radius(number): 查询半径，1 到 32 格
+        """
+        return await self._behavior_tool(event, "entities", {"radius": radius})
+
+    @filter.llm_tool(name="mc_nearby_blocks")
+    async def mc_nearby_blocks(self, event: AstrMessageEvent, block: str, radius: int = 8):
+        """查找附近指定方块的精确坐标，最多返回 20 个。
+
+        Args:
+            block(string): 方块英文 ID，例如 oak_log
+            radius(number): 查询半径，1 到 16 格
+        """
+        return await self._behavior_tool(event, "nearby_blocks", {"block": block, "radius": radius})
+
+    @filter.llm_tool(name="mc_craftable")
+    async def mc_craftable(self, event: AstrMessageEvent, item: str, count: int = 1):
+        """检查背包材料与附近合成台是否足以合成指定物品。
+
+        Args:
+            item(string): 产物英文 ID，例如 oak_planks
+            count(number): 希望得到的数量，1 到 64
+        """
+        return await self._behavior_tool(event, "craftable", {"item": item, "count": count})
+
     @filter.llm_tool(name="mc_attack_entity")
     async def mc_attack_entity(self, event: AstrMessageEvent, entity_id: int):
         """攻击附近指定 ID 的实体，包括生物或玩家。先用 mc_behavior_status 查看附近实体 ID；攻击持续最多 30 秒，不改变自动战斗目标规则。
@@ -532,6 +571,15 @@ class MCAstrBot(Star):
             entity_id(number): 附近实体的 ID
         """
         return await self._behavior_tool(event, "attack_entity", {"entityId": entity_id})
+
+    @filter.llm_tool(name="mc_attack_player")
+    async def mc_attack_player(self, event: AstrMessageEvent, username: str):
+        """攻击视野内指定玩家，最多持续 30 秒；可用 mc_entities 先确认目标。
+
+        Args:
+            username(string): 玩家名
+        """
+        return await self._behavior_tool(event, "attack_player", {"username": username})
 
     @filter.llm_tool(name="mc_send_public")
     async def mc_send_public(self, event: AstrMessageEvent, text: str):
@@ -560,7 +608,7 @@ class MCAstrBot(Star):
 
     @filter.llm_tool(name="mc_set_mode")
     async def mc_set_mode(self, event: AstrMessageEvent, mode: str, username: str = ""):
-        """切换机器人行为模式。idle 停止自主动作并等待自然语言指令；auto 自动跟随目标玩家、攻击附近敌对生物并在饥饿时吃面包；follow 只跟随。
+        """切换机器人行为模式。idle 停止自主动作并等待自然语言指令；auto 自动跟随目标玩家、攻击附近敌对生物并按优先顺序进食；follow 只跟随。
 
         Args:
             mode(string): idle、auto 或 follow
@@ -597,15 +645,151 @@ class MCAstrBot(Star):
         """
         return await self._behavior_tool(event, "collect", {"block": block, "count": count}, timeout=120)
 
+    @filter.llm_tool(name="mc_craft_recipe")
+    async def mc_craft_recipe(self, event: AstrMessageEvent, item: str, count: int = 1):
+        """用背包材料合成指定物品；需要合成台时使用附近 6 格内的合成台。
+
+        Args:
+            item(string): 产物英文 ID，例如 oak_planks
+            count(number): 至少合成的数量，1 到 16
+        """
+        return await self._behavior_tool(event, "craft_recipe", {"item": item, "count": count}, timeout=120)
+
+    @filter.llm_tool(name="mc_smelt_item")
+    async def mc_smelt_item(self, event: AstrMessageEvent, item: str, count: int = 1,
+                            fuel: str = "coal", fuel_count: int = 1):
+        """使用附近熔炉熔炼背包中的物品，并在完成后取出产物。
+
+        Args:
+            item(string): 待熔炼物品英文 ID，例如 iron_ore
+            count(number): 熔炼数量，1 到 8
+            fuel(string): 燃料英文 ID，例如 coal
+            fuel_count(number): 投入燃料数量，1 到 16
+        """
+        return await self._behavior_tool(event, "smelt_item", {
+            "item": item, "count": count, "fuel": fuel, "fuelCount": fuel_count,
+        }, timeout=120)
+
+    @filter.llm_tool(name="mc_clear_furnace")
+    async def mc_clear_furnace(self, event: AstrMessageEvent):
+        """取出附近熔炉的产物、剩余原料和燃料。"""
+        return await self._behavior_tool(event, "clear_furnace", timeout=60)
+
+    @filter.llm_tool(name="mc_place_here")
+    async def mc_place_here(self, event: AstrMessageEvent, item: str, x: int, y: int, z: int):
+        """将背包中的方块放在机器人 4.5 格内的指定空气坐标，目标旁需有可依附方块。
+
+        Args:
+            item(string): 方块物品英文 ID，例如 cobblestone
+            x(number): 放置目标 X 整数坐标
+            y(number): 放置目标 Y 整数坐标
+            z(number): 放置目标 Z 整数坐标
+        """
+        return await self._behavior_tool(event, "place_here", {"item": item, "x": x, "y": y, "z": z}, timeout=30)
+
+    @filter.llm_tool(name="mc_use_on_entity")
+    async def mc_use_on_entity(self, event: AstrMessageEvent, entity_id: int, item: str = ""):
+        """对机器人 4.5 格内指定实体使用手中物品；可先用 mc_entities 查 ID。
+
+        Args:
+            entity_id(number): 目标实体 ID
+            item(string): 可选的背包物品英文 ID；留空使用当前手持物
+        """
+        return await self._behavior_tool(event, "use_on_entity", {"entityId": entity_id, "item": item}, timeout=30)
+
+    @filter.llm_tool(name="mc_use_on_block")
+    async def mc_use_on_block(self, event: AstrMessageEvent, x: int, y: int, z: int, item: str = ""):
+        """右键机器人 4.5 格内指定方块；可选先装备背包物品。
+
+        Args:
+            x(number): 方块 X 整数坐标
+            y(number): 方块 Y 整数坐标
+            z(number): 方块 Z 整数坐标
+            item(string): 可选的背包物品英文 ID
+        """
+        return await self._behavior_tool(event, "use_on_block", {"x": x, "y": y, "z": z, "item": item}, timeout=30)
+
     @filter.llm_tool(name="mc_sleep")
     async def mc_sleep(self, event: AstrMessageEvent):
         """寻找附近的床，走过去并睡觉。"""
         return await self._behavior_tool(event, "sleep", timeout=60)
 
+    @filter.llm_tool(name="mc_go_to_bed")
+    async def mc_go_to_bed(self, event: AstrMessageEvent):
+        """寻找附近的床并走过去睡觉。"""
+        return await self._behavior_tool(event, "sleep", timeout=60)
+
     @filter.llm_tool(name="mc_eat")
-    async def mc_eat(self, event: AstrMessageEvent):
-        """从背包取面包并吃掉一个。"""
-        return await self._behavior_tool(event, "eat", timeout=30)
+    async def mc_eat(self, event: AstrMessageEvent, item: str = ""):
+        """从背包食用或饮用指定物品；留空时按自动进食优先顺序选择食物。物品是否能被食用由 Minecraft 决定。
+
+        Args:
+            item(string): 物品英文 ID，例如 cooked_beef、rotten_flesh 或 potion；留空自动选食物
+        """
+        return await self._behavior_tool(event, "eat", {"item": item}, timeout=30)
+
+    @filter.llm_tool(name="mc_inventory")
+    async def mc_inventory(self, event: AstrMessageEvent):
+        """查看机器人的背包物品、数量、栏位、手持物和饱食度。"""
+        return await self._behavior_tool(event, "inventory")
+
+    @filter.llm_tool(name="mc_equip_item")
+    async def mc_equip_item(self, event: AstrMessageEvent, item: str, destination: str = "hand"):
+        """从背包装备指定物品到手、盾牌栏或护甲栏。
+
+        Args:
+            item(string): 物品英文 ID，例如 iron_sword
+            destination(string): hand、off-hand、head、torso、legs 或 feet
+        """
+        return await self._behavior_tool(event, "equip_item", {"item": item, "destination": destination}, timeout=30)
+
+    @filter.llm_tool(name="mc_view_chest")
+    async def mc_view_chest(self, event: AstrMessageEvent):
+        """走到附近箱子或木桶，查看其中的物品和数量，查看后关闭容器。"""
+        return await self._behavior_tool(event, "view_chest", timeout=60)
+
+    @filter.llm_tool(name="mc_take_from_chest")
+    async def mc_take_from_chest(self, event: AstrMessageEvent, item: str, count: int = 1):
+        """从附近箱子或木桶取指定物品，最多 64 个。
+
+        Args:
+            item(string): 物品英文 ID，例如 bread
+            count(number): 要取的数量，1 到 64
+        """
+        return await self._behavior_tool(event, "take_from_chest", {"item": item, "count": count}, timeout=60)
+
+    @filter.llm_tool(name="mc_put_in_chest")
+    async def mc_put_in_chest(self, event: AstrMessageEvent, item: str, count: int = 1):
+        """将背包中的指定物品存入附近箱子或木桶，最多 64 个。
+
+        Args:
+            item(string): 物品英文 ID
+            count(number): 存入数量，1 到 64
+        """
+        return await self._behavior_tool(event, "put_in_chest", {"item": item, "count": count}, timeout=60)
+
+    @filter.llm_tool(name="mc_discard")
+    async def mc_discard(self, event: AstrMessageEvent, item: str, count: int = 1):
+        """从背包丢出指定物品，丢出的物品会落在机器人附近。
+
+        Args:
+            item(string): 物品英文 ID
+            count(number): 丢弃数量，1 到 64
+        """
+        return await self._behavior_tool(event, "discard", {"item": item, "count": count}, timeout=30)
+
+    @filter.llm_tool(name="mc_give_player")
+    async def mc_give_player(self, event: AstrMessageEvent, username: str, item: str, count: int = 1):
+        """走近指定玩家并把背包物品丢在玩家身边；无法保证只有该玩家拾取。
+
+        Args:
+            username(string): 玩家名
+            item(string): 物品英文 ID
+            count(number): 交付数量，1 到 64
+        """
+        return await self._behavior_tool(event, "give_player", {
+            "username": username, "item": item, "count": count,
+        }, timeout=60)
 
     @filter.llm_tool(name="mc_store_inventory")
     async def mc_store_inventory(self, event: AstrMessageEvent):
@@ -614,5 +798,5 @@ class MCAstrBot(Star):
 
     @filter.llm_tool(name="mc_fetch_supplies")
     async def mc_fetch_supplies(self, event: AstrMessageEvent):
-        """从附近箱子或木桶领取面包、最好的剑、斧和镐。"""
+        """从附近箱子或木桶领取优先食物、最好的剑、斧和镐。"""
         return await self._behavior_tool(event, "fetch", timeout=90)

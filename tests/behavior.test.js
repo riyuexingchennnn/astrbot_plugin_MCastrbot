@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { BehaviorController } = require('../behavior');
+const Vec3 = require('vec3');
 
 function setup() {
   const calls = [];
@@ -140,6 +141,7 @@ test('one-shot chest actions close the container and return supplies', async () 
   const chest = {
     containerItems: () => [
       { name: 'bread', type: 1, count: 20 },
+      { name: 'cooked_beef', type: 4, count: 10 },
       { name: 'iron_sword', type: 2, count: 1 },
       { name: 'diamond_sword', type: 3, count: 1 },
     ],
@@ -147,9 +149,46 @@ test('one-shot chest actions close the container and return supplies', async () 
     close: () => { closed++; },
   };
   bot.openContainer = async () => chest;
-  assert.deepEqual((await controller.fetch()).fetched, ['diamond_sword', 'bread']);
-  assert.deepEqual(withdrawn, [[3, 1], [1, 16]]);
-  assert.equal(closed, 1);
+  assert.deepEqual((await controller.fetch()).fetched, ['diamond_sword', 'cooked_beef']);
+  assert.deepEqual(withdrawn, [[3, 1], [4, 10]]);
+  assert.deepEqual((await controller.viewChest()).items[0], { name: 'bread', count: 20 });
+  assert.deepEqual(await controller.takeFromChest('bread', 3), { ok: true, item: 'bread', count: 3 });
+  assert.deepEqual(withdrawn, [[3, 1], [4, 10], [1, 3]]);
+  assert.equal(closed, 3);
+  await assert.rejects(controller.takeFromChest('bread', 65), /1 到 64/);
+});
+
+test('auto eating follows food priority and named eating accepts any inventory item', async () => {
+  const { bot, controller, calls } = setup();
+  const items = [
+    { name: 'bread', count: 2, slot: 2 },
+    { name: 'cooked_beef', count: 1, slot: 3 },
+    { name: 'potion', count: 1, slot: 4 },
+  ];
+  bot.inventory.items = () => items;
+  bot.food = 10;
+  bot.equip = async (item, destination) => calls.push(['equip', item.name, destination]);
+  bot.consume = async () => { calls.push(['consume']); bot.food = 16; };
+  assert.equal(controller.preferredFood(bot).name, 'cooked_beef');
+  assert.deepEqual(controller.inventory().items[0], { name: 'bread', count: 2, slot: 2 });
+  controller.setMode('auto', 'Alex');
+  controller.tick(bot);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.filter(([kind]) => kind === 'equip'), [['equip', 'cooked_beef', 'hand']]);
+  assert.deepEqual(await controller.eat('potion'), { ok: true, item: 'potion', food: 16 });
+  assert.deepEqual(calls.filter(([kind]) => kind === 'equip'),
+    [['equip', 'cooked_beef', 'hand'], ['equip', 'potion', 'hand']]);
+  await assert.rejects(controller.eat('missing_food'), /背包里没有/);
+});
+
+test('equip tool selects inventory item and validates destination', async () => {
+  const { bot, controller, calls } = setup();
+  bot.inventory.items = () => [{ name: 'iron_sword', count: 1, slot: 3 }];
+  bot.equip = async (item, destination) => calls.push(['equip', item.name, destination]);
+  assert.deepEqual(await controller.equipItem('iron_sword', 'hand'),
+    { ok: true, item: 'iron_sword', destination: 'hand' });
+  assert.deepEqual(calls.filter(([kind]) => kind === 'equip'), [['equip', 'iron_sword', 'hand']]);
+  await assert.rejects(controller.equipItem('iron_sword', 'invalid'), /装备位置无效/);
 });
 
 test('idle one-shot task temporarily enters survival and restores resting mode', async () => {
@@ -163,4 +202,98 @@ test('idle one-shot task temporarily enters survival and restores resting mode',
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(calls.filter(([kind]) => kind === 'chat'),
     [['chat', '/gamemode survival'], ['chat', '/gamemode spectator']]);
+});
+
+test('query tools expose nearby entities, blocks, recipes and current modes', () => {
+  const { bot, controller } = setup();
+  bot.version = '1.21.4';
+  bot.findBlocks = () => [new Vec3(1, 64, 2)];
+  bot.findBlock = () => null;
+  bot.recipesFor = () => [{ result: { count: 4 }, requiresTable: false }];
+  assert.equal(controller.modes().gameMode, 'survival');
+  assert.deepEqual(controller.entities().entities.map(entity => entity.id), [4, 8, 9, 10]);
+  assert.deepEqual(controller.nearbyBlocks('stone').positions, [{ x: 1, y: 64, z: 2 }]);
+  assert.equal(controller.craftable('oak_planks').craftable, true);
+  assert.throws(() => controller.nearbyBlocks('stone', 17));
+});
+
+test('crafting, placement and interactions invoke Mineflayer with checked targets', async () => {
+  const { bot, controller, calls } = setup();
+  bot.version = '1.21.4';
+  bot.entity.position = new Vec3(0, 64, 0);
+  bot.entities[9].position = new Vec3(1, 64, 0);
+  bot.inventory.items = () => [{ name: 'cobblestone', type: 1, count: 4 }];
+  bot.findBlock = () => null;
+  bot.recipesFor = () => [{ result: { count: 4 }, requiresTable: false }];
+  bot.craft = async (_recipe, times, table) => calls.push(['craft', times, table]);
+  bot.blockAt = pos => ({ name: pos.y === 63 ? 'stone' : 'air', position: pos });
+  bot.equip = async item => calls.push(['equip', item.name]);
+  bot.placeBlock = async (support, face) => calls.push(['place', support.position.y, face.y]);
+  bot.useOn = async entity => calls.push(['use_entity', entity.id]);
+  bot.activateBlock = async block => calls.push(['use_block', block.name]);
+  assert.equal((await controller.craftRecipe('oak_planks', 3)).count, 4);
+  assert.deepEqual(await controller.placeHere('cobblestone', 1, 64, 0),
+    { ok: true, block: 'cobblestone', position: { x: 1, y: 64, z: 0 } });
+  assert.equal((await controller.useOnEntity(9, 'cobblestone')).entityId, 9);
+  assert.equal((await controller.useOnBlock(1, 63, 0)).block, 'stone');
+  assert.deepEqual(calls.filter(([kind]) => kind === 'place'), [['place', 63, 1]]);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'use_entity'), [['use_entity', 9]]);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'use_block'), [['use_block', 'stone']]);
+  await assert.rejects(controller.placeHere('cobblestone', 30, 64, 0));
+});
+
+test('smelting waits for output and closes furnace; clearing takes remaining slots', async () => {
+  const { bot, controller, calls } = setup();
+  bot.version = '1.21.4';
+  bot.pathfinder.goto = async () => {};
+  bot.findBlock = () => ({ position: new Vec3(1, 64, 1) });
+  bot.blockAt = () => ({ name: 'furnace' });
+  bot.inventory.items = () => [
+    { name: 'iron_ore', type: 1, count: 2 },
+    { name: 'coal', type: 2, count: 1 },
+  ];
+  let ready = false;
+  const furnace = {
+    inputItem: () => null,
+    fuelItem: () => null,
+    outputItem: () => ready ? { name: 'iron_ingot', count: 2 } : null,
+    putInput: async (_type, _meta, count) => calls.push(['input', count]),
+    putFuel: async (_type, _meta, count) => { calls.push(['fuel', count]); ready = true; },
+    takeOutput: async () => { calls.push(['output']); ready = false; },
+    close: () => calls.push(['close']),
+  };
+  bot.openFurnace = async () => furnace;
+  assert.equal((await controller.smeltItem('iron_ore', 2)).item, 'iron_ingot');
+  assert.deepEqual(calls.filter(([kind]) => ['input', 'fuel', 'output', 'close'].includes(kind)),
+    [['input', 2], ['fuel', 1], ['output'], ['close']]);
+  ready = true;
+  await assert.rejects(controller.smeltItem('iron_ore', 2));
+  assert.deepEqual((await controller.clearFurnace()).taken,
+    [{ slot: 'output', item: 'iron_ingot', count: 2 }]);
+  assert.equal(calls.filter(([kind]) => kind === 'close').length, 3);
+});
+
+test('giving, discarding and depositing transfer only the requested item', async () => {
+  const { bot, controller, calls } = setup();
+  bot.version = '1.21.4';
+  bot.inventory.items = () => [
+    { name: 'bread', type: 1, count: 5 },
+    { name: 'dirt', type: 2, count: 8 },
+  ];
+  bot.pathfinder.goto = async () => {};
+  bot.toss = async (type, _metadata, count) => calls.push(['toss', type, count]);
+  bot.findBlock = () => ({ position: new Vec3(1, 64, 1) });
+  bot.blockAt = () => ({ name: 'chest' });
+  const chest = {
+    deposit: async (type, _metadata, count) => calls.push(['deposit', type, count]),
+    close: () => calls.push(['close']),
+  };
+  bot.openContainer = async () => chest;
+  assert.equal((await controller.givePlayer('Alex', 'bread', 2)).droppedNearPlayer, true);
+  assert.equal((await controller.discard('dirt', 3)).count, 3);
+  assert.equal((await controller.putInChest('bread', 4)).count, 4);
+  assert.deepEqual(calls.filter(([kind]) => ['toss', 'deposit'].includes(kind)),
+    [['toss', 1, 2], ['toss', 2, 3], ['deposit', 1, 4]]);
+  assert.equal(calls.filter(([kind]) => kind === 'close').length, 1);
+  await assert.rejects(controller.givePlayer('Alex', 'bread', 6));
 });

@@ -11,8 +11,8 @@
 ## 功能
 
 - **游戏内对话**：支持 `/tell` 私聊和可选的公屏自动回复；可设置唤醒词、MC 专用全局提示词和长回复分段。
-- **自主行为**：机器人可待机、跟随玩家，或在跟随时自动攻击附近的敌对生物并在饥饿时吃面包。
-- **管理员 Agent 工具**：通过自然语言让机器人观察、扫描、移动、攻击指定生物或玩家、收集方块、使用容器，以及在公屏发言或执行 Minecraft 命令。
+- **自主行为**：机器人可待机、跟随玩家，或在跟随时自动攻击附近的敌对生物并按优先顺序吃背包中的食物。
+- **管理员 Agent 工具**：通过自然语言让机器人观察、扫描、移动、攻击指定生物或玩家、查看和使用背包及容器，以及在公屏发言或执行 Minecraft 命令。
 - **状态面板**：查看连接状态、在线玩家、机器人位置与游戏状态、聊天记录和运行日志。
 
 ## 安装
@@ -37,7 +37,18 @@
 
 - `idle`：停止自主跟随和战斗，等待自然语言指令。
 - `follow`：跟随指定玩家，不主动战斗。
-- `auto`：跟随指定玩家，攻击 8 格内的敌对生物，并在饱食度低时吃面包。自动战斗的目标规则不会因 LLM 指定攻击而改变。
+- `auto`：跟随指定玩家，攻击 8 格内的敌对生物；饱食度低于 17 时，按下面的顺序从背包选择食物。自动战斗的目标规则不会因 LLM 指定攻击而改变。
+
+自动进食从左到右、从上到下查找背包，选中第一个已有的食物。会传送或可能造成负面效果的食物不会被自动选中，金苹果等稀有食物也留给手动使用；管理员仍可通过进食工具指定它们。
+
+```text
+golden_carrot → cooked_beef → cooked_porkchop → cooked_mutton
+cooked_chicken → cooked_rabbit → cooked_salmon → cooked_cod
+baked_potato → bread → rabbit_stew → mushroom_stew → beetroot_soup
+pumpkin_pie → apple → carrot → beetroot → potato → melon_slice
+sweet_berries → glow_berries → cookie → dried_kelp → honey_bottle
+beef → porkchop → mutton → rabbit → cod → salmon → tropical_fish
+```
 
 跟随目标超出 16 格或实体不可见时，机器人最多每 15 秒请求一次 `/tp` 追上目标。`auto` 和 `follow` 会请求切换到 `survival`。这些行为需要服务器授予机器人相应的 `/gamemode`、`/tp` 和方块、容器交互权限。“登录后游戏模式”可选择 `survival`、`creative`、`adventure` 或 `spectator`。
 
@@ -45,9 +56,13 @@
 
 先在插件设置中开启“允许 LLM 控制机器人行为”和“允许管理员让机器人调用 Agent 工具”，再把玩家名加入“管理员玩家名列表”。只有满足这些条件的 Minecraft 会话才能调用游戏操作工具。
 
-- `mc_behavior_status` 列出机器人状态及 16 格内可攻击实体的 ID。LLM 可选一个 ID 调用 `mc_attack_entity`，攻击生物或玩家；指定攻击最多持续 30 秒，之后恢复原有行为。
+- `mc_behavior_status` / `mc_stats` 查看机器人状态，`mc_modes` 查看当前行为模式和游戏模式，`mc_entities` 列出附近实体及 ID。`mc_attack_entity` 可按 ID 攻击生物或玩家，`mc_attack_player` 可按玩家名攻击；指定攻击最多持续 30 秒，之后恢复原有行为。`mc_follow_player` 让机器人跟随指定玩家，`mc_set_mode` 可在待机、跟随和自动战斗间切换。自动战斗的怪物列表不会被指定攻击改变。
 - `mc_send_public` 让机器人在公屏发言；内容以 `/` 开头时会执行任意 Minecraft 命令，例如 `/gamemode creative`。服务器仍需授予机器人对应命令的权限。这个工具不受公屏自动回复开关影响，发言后不会在同一公屏会话重复回复相同内容。
-- 其他工具支持看向玩家、扫描附近方块、附近移动、切换行为模式、跟随、开关自动战斗、收集方块、睡觉、吃面包、存入物品和领取补给。`mc_observe_player` 只让机器人转头看向视野内的玩家，不会移动或攻击；插件的 Web API 也提供这项操作。
+- `mc_inventory` 查询背包，`mc_eat` 留空时按食物优先顺序进食，也可指定任意背包物品尝试食用或饮用；`mc_equip_item` 装备物品，`mc_discard` 丢弃物品。`mc_give_player` 会走近玩家并把物品丢在玩家附近，玩家需自行拾取。
+- `mc_view_chest`、`mc_take_from_chest`、`mc_put_in_chest` 分别查看、取出、放入附近箱子或木桶中的指定物品。`mc_fetch_supplies` 按食物优先顺序领食物，并领取最好的剑、斧和镐；`mc_store_inventory` 存入背包物品。
+- `mc_nearby_blocks` 查找指定方块坐标，`mc_craftable` 检查指定物品及数量能否合成，`mc_craft_recipe` 合成物品，`mc_collect_blocks` 收集方块。`mc_smelt_item` 使用附近熔炉并等待产物，单次最多 8 个；`mc_clear_furnace` 取出熔炉内的产物、原料和燃料。
+- `mc_place_here` 在 4.5 格内指定空气坐标放置背包方块，目标旁需有可依附方块。`mc_use_on_entity` 和 `mc_use_on_block` 可对附近实体或方块使用手中或指定的背包物品。
+- `mc_go_to_bed` / `mc_sleep` 在附近床上睡觉。`mc_scan_surroundings`、`mc_move_nearby`、`mc_set_auto_combat` 分别扫描、移动和开关自动战斗。`mc_observe_player` 只让机器人看向玩家，不会移动或攻击；插件的 Web API 也提供这项操作。
 
 ### 状态面板
 
