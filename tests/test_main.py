@@ -18,7 +18,7 @@ def test_only_body_wakes_and_channel_is_preserved(monkeypatch, tmp_path):
     MCAstrBot, _, _, _, _, _ = load_plugin(monkeypatch, tmp_path)
     events = []
     plugin = object.__new__(MCAstrBot)
-    plugin.config = {"bot_name": "Fairy", "wake_keywords": ["Fairy"]}
+    plugin.config = {"bot_name": "Fairy", "wake_keywords": ["Fairy"], "public_auto_reply": True}
     plugin.context = SimpleNamespace(get_event_queue=lambda: SimpleNamespace(put_nowait=events.append))
 
     async def receive(channel, username, text):
@@ -40,6 +40,25 @@ def test_only_body_wakes_and_channel_is_preserved(monkeypatch, tmp_path):
     del plugin.config["wake_keywords"]
     asyncio.run(receive("tell", "Alex", "默认不需要唤醒词"))
     assert len(events) == 4
+
+
+def test_public_auto_reply_defaults_off_but_explicit_setting_is_respected(monkeypatch, tmp_path):
+    MCAstrBot, *_ = load_plugin(monkeypatch, tmp_path)
+    events = []
+    plugin = object.__new__(MCAstrBot)
+    plugin.config = {"bot_name": "Fairy", "wake_keywords": []}
+    plugin.context = SimpleNamespace(get_event_queue=lambda: SimpleNamespace(put_nowait=events.append))
+
+    async def receive(channel):
+        await plugin._receive({"channel": channel, "username": "Alex", "text": "你好"})
+
+    asyncio.run(receive("public"))
+    assert events == []
+    asyncio.run(receive("tell"))
+    assert len(events) == 1
+    plugin.config["public_auto_reply"] = True
+    asyncio.run(receive("public"))
+    assert len(events) == 2
 
 
 def test_existing_segmentation_values_are_migrated_once(monkeypatch, tmp_path):

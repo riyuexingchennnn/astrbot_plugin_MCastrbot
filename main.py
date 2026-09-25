@@ -316,7 +316,7 @@ class MCAstrBot(Star):
         body = str(data.get("text", "")).strip()
         if channel not in ("public", "tell") or not re.fullmatch(r"[A-Za-z0-9_]{1,16}", sender) or not body:
             return
-        if channel == "public" and not self.config.get("public_auto_reply", True):
+        if channel == "public" and not self.config.get("public_auto_reply", False):
             return
         keywords = self.config.get("wake_keywords", [])
         if keywords and not any(

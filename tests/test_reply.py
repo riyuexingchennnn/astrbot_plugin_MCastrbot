@@ -43,6 +43,7 @@ class SplitReplyTest(unittest.TestCase):
     def test_schema_groups_segmentation_without_fake_indentation(self):
         schema = json.loads((Path(__file__).resolve().parents[1] / "_conf_schema.json").read_text(encoding="utf-8"))
         self.assertEqual(schema["wake_keywords"]["default"], [])
+        self.assertFalse(schema["public_auto_reply"]["default"])
         group = schema["segmentation"]
         self.assertEqual(group["type"], "object")
         self.assertEqual(group["condition"], {"segmented_reply": True})
